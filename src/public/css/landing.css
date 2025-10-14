@@ -1169,7 +1169,15 @@ label {
 .hero-copy {
     position: relative;
     z-index: 1;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 10px;
+    padding: 1em;
 }
+
+.hero-copy .hero-paragraph{
+    color: #ffffff;
+}
+
 .hero-cta {
     margin-bottom: 40px;
 }
@@ -1600,7 +1608,7 @@ label {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
-        background-image: url(../images/welcome-background.png);
+    background-image: url(../images/background1.webp);
     background-repeat: no-repeat;
     background-size: cover;
 }

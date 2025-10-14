@@ -1228,8 +1228,10 @@ async function whoAreYou() {
     Swal.fire({
         allowOutsideClick: false,
         allowEscapeKey: false,
-        background: swalBackground,
+        //background: swalBackground,
+        background:"url(../images/background6.webp) no-repeat top / cover",
         imageUrl: BRAND.site?.watermark,
+        position: 'center-start',
         //title: room_id,
         input: 'text',
         inputPlaceholder: 'Enter your email or name',
@@ -1237,7 +1239,7 @@ async function whoAreYou() {
         inputValue: default_name,
         html: initUser, // Inject HTML
         confirmButtonText: `Join meeting`,
-        customClass: { popup: 'init-modal-size', title:"join-meeting-title", image:"join-meeting-image" },
+        customClass: { popup: 'init-modal-size', title:"join-meeting-title", image:"join-meeting-image", container:"join-container" },
         showClass: { popup: 'animate__animated animate__fadeInDown' },
         hideClass: { popup: 'animate__animated animate__fadeOutUp' },
         willOpen: () => {

@@ -90,13 +90,20 @@ body {
     border-radius: 10px;
 }
 
+.join-container{
+    padding: 0!important;
+}
+
 /*--------------------------------------------------------------
 # Init User
 --------------------------------------------------------------*/
 
 .init-modal-size {
-    width: 1024px !important;
-    height: auto !important;
+    height: 100vh !important;
+    width: 400px !important;
+    background: url(../images/background6.webp) center top / cover no-repeat;
+    grid-column: 1!important;
+    grid-row: 1!important;
 }
 
 .init-user {
@@ -123,7 +130,7 @@ body {
 > 1024px SCREEN */
 @media screen and (min-width: 1025px) {
     .init-modal-size {
-        width: 1024px !important;
+        width: 400px !important;
     }
     .init-user {
         display: flex;
@@ -144,9 +151,6 @@ body {
     }
     .init-video-container {
         padding: 0px;
-    }
-    .init-modal-size {
-        width: 480px !important;
     }
 }
 
