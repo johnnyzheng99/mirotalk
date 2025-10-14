@@ -87,11 +87,20 @@
                     <div class="container">
                         <div class="hero-inner">
                             <div class="hero-copy">
-                                <h3  class="hero-title mt-0 mb-16">You’ve exited the meeting.</h3>
-                                <p   class="hero-paragraph" style="color: #ffffff;">
-                                    The session may still be active — use the same link to rejoin, or contact the host for details.
-                                    <!-- You'll be redirected to the room when they arrive. -->
-                                </p>
+                                <div class="hidden lang-en">
+                                    <h3  class="hero-title mt-0 mb-16">You’ve exited the meeting.</h3>
+                                    <p   class="hero-paragraph" style="color: #ffffff;">
+                                        The session may still be in progress. To rejoin, please use the same link or contact the host for more details.
+                                        <!-- You'll be redirected to the room when they arrive. -->
+                                    </p>
+                                </div>
+                                <div class="hidden lang-zh">
+                                    <h3  class="hero-title mt-0 mb-16">您已退出会议。</h3>
+                                    <p   class="hero-paragraph" style="color: #ffffff;">
+                                        会话可能仍在进行中。若需重新加入，请使用相同的链接进入会议，或联系主持人了解详情。
+                                        <!-- You'll be redirected to the room when they arrive. -->
+                                    </p>
+                                </div>
                                 <div id="loginForm" style="display: none;">
                                     <br />
                                     <div class="mb-12">
@@ -121,49 +130,8 @@
                                         </button>
                                     </div>
                                 </div>
-                                <!-- Join Room Section hidden -->
-                                <div id="joinRoomForm" class="mb-12">
-                                    <div class="hero-copy reveal-from-bottom">
-                                        <h1 class="hero-title mt-0">
-                                            Pick name. <br />
-                                            Share URL. <br />
-                                            Start conference.
-                                        </h1>
-                                    </div>
-                                    <br />
-                                    <div class="mb-12">
-                                        <select id="selectRoom" class="form-select text-light bg-dark"></select>
-                                    </div>
-
-                                    <div class="mt-24 mb-32 d-flex gap-2">
-                                        <button
-                                            id="generateRoomButton"
-                                            class="button button-primary"
-                                            title="Generate random ROOM"
-                                        >
-                                            <i class="fas fa-sync-alt"></i>
-                                        </button>
-                                        <button id="joinSelectRoomButton" class="button button-primary flex-fill">
-                                            JOIN ROOM
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="hero-figure anime-element">
-                                <svg class="placeholder" width="528" height="396" viewBox="0 0 528 396">
-                                    <rect width="528" height="396" style="fill: transparent" />
-                                </svg>
-                                <div class="hero-figure-box hero-figure-box-01" data-rotation="45deg"></div>
-                                <div class="hero-figure-box hero-figure-box-02" data-rotation="-45deg"></div>
-                                <div class="hero-figure-box hero-figure-box-03" data-rotation="0deg"></div>
-                                <div class="hero-figure-box hero-figure-box-04" data-rotation="-135deg"></div>
-                                <div class="hero-figure-box hero-figure-box-05"></div>
-                                <div class="hero-figure-box hero-figure-box-06"></div>
-                                <div class="hero-figure-box hero-figure-box-07"></div>
-                                <div class="hero-figure-box hero-figure-box-08" data-rotation="-22deg"></div>
-                                <div class="hero-figure-box hero-figure-box-09" data-rotation="-52deg"></div>
-                                <div class="hero-figure-box hero-figure-box-10" data-rotation="-50deg"></div>
-                            </div>
+                          
+                            </div>                            
                         </div>
                     </div>
                 </section>
@@ -175,5 +143,16 @@
         <script defer src="../js/Login.js"></script>
         <script defer src="../js/Landing.js"></script>
         <script async defer src="https://buttons.github.io/buttons.js"></script>
+        <script type="text/javascript">
+            const lang = (navigator.language || navigator.userLanguage).toLowerCase();
+
+            let showLang = 'en';
+            if (lang.startsWith('zh')) showLang = 'zh';
+
+            document.addEventListener('DOMContentLoaded', () => {
+                const target = document.querySelector(`.lang-${showLang}`);
+                if (target) target.style.display = 'block';
+            });
+        </script>
     </body>
 </html>

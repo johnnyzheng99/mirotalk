@@ -62,33 +62,28 @@
                 <section class="hero">
                     <div class="container">
                         <div class="hero-inner">
-                            <div class="hero-copy">
-                                <h1 id="whoAreYouTitle" class="hero-title mt-0 mb-16">Meeting not started yet</h1>
-                                <p id="whoAreYouDescription" class="hero-paragraph">
-                                    Waiting for the host to join...<br />
-                                    You will be able to join once the host starts the meeting.<br />
-                                    <!-- You'll be redirected to the room when they arrive. -->
-                                </p>
+                            <div class="hero-copy ">
+                                <div class="hidden lang-en">
+                                    <h1 id="whoAreYouTitle" class="hero-title mt-0 mb-16">Meeting not started yet</h1>
+                                    <p id="whoAreYouDescription" class="hero-paragraph">
+                                        Waiting for the host to join...<br />
+                                        You will be able to join once the host starts the meeting. <br />
+                                        <!-- You'll be redirected to the room when they arrive. -->
+                                    </p>
+                                </div>
+                                <div class="hidden lang-zh">
+                                    <h1 id="whoAreYouTitle" class="hero-title mt-0 mb-16">会议还未开始</h1>
+                                    <p id="whoAreYouDescription" class="hero-paragraph">
+                                        等待主持人加入...<br />
+                                        主持人加入后会议将自动开始。如果没有跳转到会议房间,请刷新页面或者点击下面的按钮加入会议。<br />
+                                        <!-- You'll be redirected to the room when they arrive. -->
+                                    </p>
+                                </div>
                                 <div class="hero-cta">
                                     <!--<a id="presenterLoginButton" class="button button-primary pulse">LOGIN</a>-->
                                     <a id="guestJoinRoomButton" class="button button-primary pulse">JOIN ROOM</a>
                                 </div>
-                            </div>
-                            <div class="hero-figure anime-element">
-                                <svg class="placeholder" width="528" height="396" viewBox="0 0 528 396">
-                                    <rect width="528" height="396" style="fill: transparent" />
-                                </svg>
-                                <div class="hero-figure-box hero-figure-box-01" data-rotation="45deg"></div>
-                                <div class="hero-figure-box hero-figure-box-02" data-rotation="-45deg"></div>
-                                <div class="hero-figure-box hero-figure-box-03" data-rotation="0deg"></div>
-                                <div class="hero-figure-box hero-figure-box-04" data-rotation="-135deg"></div>
-                                <div class="hero-figure-box hero-figure-box-05"></div>
-                                <div class="hero-figure-box hero-figure-box-06"></div>
-                                <div class="hero-figure-box hero-figure-box-07"></div>
-                                <div class="hero-figure-box hero-figure-box-08" data-rotation="-22deg"></div>
-                                <div class="hero-figure-box hero-figure-box-09" data-rotation="-52deg"></div>
-                                <div class="hero-figure-box hero-figure-box-10" data-rotation="-50deg"></div>
-                            </div>
+                            </div>                            
                         </div>
                     </div>
                 </section>
@@ -99,5 +94,16 @@
         <script async src="../js/WhoAreYou.js"></script>
         <script defer src="../js/Landing.js"></script>
         <script async defer src="https://buttons.github.io/buttons.js"></script>
+        <script type="text/javascript">
+            const lang = (navigator.language || navigator.userLanguage).toLowerCase();
+
+            let showLang = 'en';
+            if (lang.startsWith('zh')) showLang = 'zh';
+
+            document.addEventListener('DOMContentLoaded', () => {
+                const target = document.querySelector(`.lang-${showLang}`);
+                if (target) target.style.display = 'block';
+            });
+        </script>
     </body>
 </html>
