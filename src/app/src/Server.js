@@ -64,7 +64,7 @@ dev dependencies: {
  * @license For commercial or closed source, contact us at license.mirotalk@gmail.com or purchase directly via CodeCanyon
  * @license CodeCanyon: https://codecanyon.net/item/mirotalk-sfu-webrtc-realtime-video-conferences/40769970
  * @author  Miroslav Pejic - miroslav.pejic.85@gmail.com
- * @version 1.9.76
+ * @version 2.0.94
  *
  */
 
@@ -91,6 +91,7 @@ const sanitizeFilename = require('sanitize-filename');
 const helmet = require('helmet');
 const config = require('./config');
 const checkXSS = require('./XSS');
+const mime = require('mime-types');
 const Host = require('./Host');
 const Room = require('./Room');
 const Peer = require('./Peer');
@@ -107,6 +108,23 @@ const Discord = require('./Discord');
 const Mattermost = require('./Mattermost');
 const restrictAccessByIP = require('./middleware/IpWhitelist');
 const packageJson = require('../../package.json');
+
+// Login attempts limit
+const rateLimit = require('express-rate-limit');
+const maxAttempts = config?.security?.host?.maxAttempts || 5;
+const minBlockTime = config?.security?.host?.minBlockTime || 15; // minutes
+// Extract client IP (supports proxies)
+const ipKeyGenerator = (req) =>
+    (req.headers['x-forwarded-for'] || req.headers['X-Forwarded-For'] || '').split(',')[0].trim() ||
+    req.socket?.remoteAddress ||
+    req.ip;
+// Create login rate limiter
+const loginLimiter = rateLimit({
+    windowMs: minBlockTime * 60 * 1000,
+    max: maxAttempts,
+    message: 'Too many login attempts, please try again later.',
+    keyGenerator: (req) => req.body?.username || ipKeyGenerator(req),
+});
 
 // Branding configuration
 const brandHtmlInjection = config?.ui?.brand?.htmlInjection ?? true;
@@ -267,8 +285,8 @@ const OIDC = config?.security?.oidc || { enabled: false };
 // directory
 const dir = {
     public: path.join(__dirname, '../../public'),
-    rec: path.join(__dirname, '../', config?.media?.recording?.dir || 'rec', '/'),
-    rtmp: path.join(__dirname, '../', config?.media?.rtmp?.dir || 'rtmp', '/'),
+    rec: path.join(__dirname, config?.media?.recording?.dir || 'rec'),
+    rtmp: path.join(__dirname, config?.media?.rtmp?.dir || 'rtmp'),
 };
 
 // Rec directory create and set max file size
@@ -295,11 +313,13 @@ if (rtmpEnabled) {
 // ####################################################
 
 const s3Client = new S3Client({
-    region: config?.integrations?.aws?.region, // Set your AWS region
+    region: config?.integrations?.s3?.region, // Set your AWS region
     credentials: {
-        accessKeyId: config?.integrations?.aws?.accessKeyId,
-        secretAccessKey: config?.integrations?.aws?.secretAccessKey,
+        accessKeyId: config?.integrations?.s3?.accessKeyId,
+        secretAccessKey: config?.integrations?.s3?.secretAccessKey,
     },
+    endpoint: config?.integrations?.s3?.endpoint || undefined,
+    forcePathStyle: config?.integrations?.s3?.forcePathStyle === true,
 });
 
 // html views
@@ -318,7 +338,7 @@ const views = {
     whoAreYou: path.join(__dirname, '../../', 'public/views/whoAreYou.html'),
 };
 
-const filesPath = [views.landing, views.newRoom, views.room, views.login];
+const filesPath = [views.landing, views.newRoom, views.room, views.login, views.whoAreYou, views.activeRooms];
 
 const htmlInjector = new HtmlInjector(filesPath, config.ui.brand);
 
@@ -628,7 +648,7 @@ function startServer() {
 
     // Get Active rooms
     app.get('/activeRooms', OIDCAuth, (req, res) => {
-        res.sendFile(views.activeRooms);
+        htmlInjector.injectHtml(views.activeRooms, res);
     });
 
     // Check if room active (exists)
@@ -642,6 +662,14 @@ function startServer() {
         } else {
             res.status(400).json({ message: 'Unauthorized' });
         }
+    });
+
+    // Check if Widget room active (exists)
+    app.post('/isWidgetRoomActive', (req, res) => {
+        const { roomId } = checkXSS(req.body);
+        const roomWidgetActive = roomId && roomId === widget.roomId && roomList.has(roomId);
+        log.debug('isWidgetRoomActive', { roomId, roomWidgetActive });
+        res.status(200).json({ message: roomWidgetActive });
     });
 
     // Handle Direct join room with params
@@ -812,7 +840,7 @@ function startServer() {
 
     // handle who are you: Presenter or Guest
     app.get('/whoAreYou/:roomId', (req, res) => {
-        res.sendFile(views.whoAreYou);
+        htmlInjector.injectHtml(views.whoAreYou, res);
     });
 
     // handle login if user_auth enabled
@@ -844,7 +872,7 @@ function startServer() {
     // ####################################################
 
     // handle login on host protected
-    app.post('/login', async (req, res) => {
+    app.post('/login', loginLimiter, async (req, res) => {
         const ip = getIP(req);
         log.debug(`Request login to host from: ${ip}`, req.body);
 
@@ -876,7 +904,7 @@ function startServer() {
             const token = encodeToken({ username: username, password: password, presenter: isPresenter });
             const allowedRooms = await getUserAllowedRooms(username, password);
 
-            log.info('login -------------->', { displayName: user?.displayname || username });
+            log.debug('login -------------->', { displayName: user?.displayname || username });
 
             return res
                 .status(200)
@@ -951,12 +979,17 @@ function startServer() {
             const fileStream = fs.createReadStream(filePath);
             const key = `recordings/${roomId}/${fileName}`;
 
+            const mimeType = mime.lookup(fileName) || 'application/octet-stream';
+
+            log.debug(`[Upload] Uploading ${fileName}`, { bucket: bucket, key: key, mimeType: mimeType });
+
             const upload = new Upload({
                 client: s3Client,
                 params: {
                     Bucket: bucket,
                     Key: key,
                     Body: fileStream,
+                    ContentType: mimeType,
                     Metadata: {
                         'room-id': roomId,
                         'file-name': fileName,
@@ -1080,7 +1113,7 @@ function startServer() {
 
     app.post('/recSyncFinalize', async (req, res) => {
         try {
-            const shouldUploadToS3 = config?.integrations?.aws?.enabled && config?.media?.recording?.uploadToS3;
+            const shouldUploadToS3 = config?.integrations?.s3?.enabled && config?.media?.recording?.uploadToS3;
             if (!shouldUploadToS3 || !serverRecordingEnabled) {
                 return res.status(403).json({ error: 'Recording disabled' });
             }
@@ -1105,7 +1138,7 @@ function startServer() {
                 }
             }
 
-            const bucket = config?.integrations?.aws?.bucket;
+            const bucket = config?.integrations?.s3?.bucket;
             const s3 = await uploadToS3(filePath, fileName, roomId, bucket, s3Client);
 
             const duration = ((Date.now() - start) / 1000).toFixed(2);
@@ -1493,6 +1526,25 @@ function startServer() {
         res.sendFile(views.notFound);
     });
 
+    // Global error handler for URIError and other errors
+    app.use((err, req, res, next) => {
+        if (err instanceof URIError) {
+            log.warn('Malformed URI detected', {
+                url: req.url,
+                ip: getIP(req),
+                error: err.message,
+            });
+            return res.status(400).send({ status: 400, message: 'Invalid URL encoding' });
+        }
+        // Handle other errors
+        log.error('Unhandled error', {
+            url: req.url,
+            error: err.message,
+            stack: err.stack,
+        });
+        res.status(500).send({ status: 500, message: 'Internal server error' });
+    });
+
     // ####################################################
     // SERVER CONFIG
     // ####################################################
@@ -1702,9 +1754,9 @@ function startServer() {
             /*
             setInterval(async () => {
                 const usage = await worker.getResourceUsage();
-                log.info('mediasoup Worker resource usage', { worker_pid: worker.pid, usage: usage });
+                log.debug('mediasoup Worker resource usage', { worker_pid: worker.pid, usage: usage });
                 const dump = await worker.dump();
-                log.info('mediasoup Worker dump', { worker_pid: worker.pid, dump: dump });
+                log.debug('mediasoup Worker dump', { worker_pid: worker.pid, dump: dump });
             }, 120000);
             */
         }
@@ -1769,7 +1821,7 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
-            log.info('User joined', data);
+            log.debug('User joined', data);
 
             if (!Validator.isValidRoomName(socket.room_id)) {
                 log.warn('[Join] - Invalid room name', socket.room_id);
@@ -1848,7 +1900,7 @@ function startServer() {
 
             // check if banned...
             if (room.isBanned(peer_uuid)) {
-                log.info('[Join] - peer is banned!', {
+                log.debug('[Join] - peer is banned!', {
                     room_id: data.room_id,
                     peer: {
                         name: peer_name,
@@ -1872,11 +1924,11 @@ function startServer() {
 
             const activeRooms = getActiveRooms();
 
-            log.info('[Join] - current active rooms', activeRooms);
+            log.debug('[Join] - current active rooms', activeRooms);
 
             const activeStreams = getRTMPActiveStreams();
 
-            log.info('[Join] - current active RTMP streams', activeStreams);
+            log.debug('[Join] - current active RTMP streams', activeStreams);
 
             if (!(socket.room_id in presenters)) presenters[socket.room_id] = {};
 
@@ -1896,7 +1948,7 @@ function startServer() {
                 presenters[socket.room_id][socket.id] = presenter;
             }
 
-            log.info('[Join] - Connected presenters grp by roomId', presenters);
+            log.debug('[Join] - Connected presenters grp by roomId', presenters);
 
             const isPresenter = peer_token
                 ? is_presenter
@@ -1910,7 +1962,7 @@ function startServer() {
                 });
             }
 
-            log.info('[Join] - Is Peer presenter', {
+            log.debug('[Join] - Is Peer presenter', {
                 roomId: socket.room_id,
                 peer_name: peer_name,
                 peer_presenter: isPresenter,
@@ -1954,10 +2006,20 @@ function startServer() {
             };
 
             const firstJoin = room.getPeersCount() === 1;
+            const guestJoin = room.getPeersCount() === 2;
 
-            // SCENARIO: Notify when the first user join room and is awaiting assistance
+            // SCENARIO: Notify when the first user join room and is awaiting assistance (global email alert)
             if (firstJoin && !widget.alert.enabled) {
                 nodemailer.sendEmailAlert('join', emailPayload);
+            }
+
+            // SCENARIO: Notify when the first guest user join room and presenter in (room email notification)
+            if (guestJoin) {
+                const notifications = room.getRoomNotifications();
+                log.debug('Room notifications on guest join', { notifications: notifications });
+                if (notifications?.mode?.email && notifications?.events?.join) {
+                    nodemailer.sendEmailNotifications('join', emailPayload, notifications);
+                }
             }
 
             // SCENARIO: Notify when a user joins the widget room for expert assistance
@@ -2326,13 +2388,15 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
+            log.debug('cmd', data);
+
+            if (!Validator.isValidData(data)) return;
+
             const room = getRoom(socket);
 
             const peer = getPeer(socket);
 
             if (!room || !peer) return;
-
-            log.debug('cmd', data);
 
             switch (data.type) {
                 case 'privacy':
@@ -2362,11 +2426,13 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
+            log.debug('Room action:', data);
+
+            if (!Validator.isValidData(data)) return;
+
             const isPresenter = isPeerPresenter(socket.room_id, socket.id, data.peer_name, data.peer_uuid);
 
             const room = getRoom(socket);
-
-            log.debug('Room action:', data);
 
             switch (data.action) {
                 case 'broadcasting':
@@ -2422,7 +2488,7 @@ function startServer() {
                     room.broadCast(socket.id, 'roomAction', data.action);
                     break;
                 case 'isBanned':
-                    log.info('The user has been banned from the room due to spamming messages', data);
+                    log.debug('The user has been banned from the room due to spamming messages', data);
                     room.addBannedPeer(data.peer_uuid);
                     break;
                 default:
@@ -2481,6 +2547,8 @@ function startServer() {
 
             log.debug('Peer action', data);
 
+            if (!Validator.isValidData(data)) return;
+
             const presenterActions = [
                 'mute',
                 'unmute',
@@ -2521,6 +2589,8 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
+            if (!Validator.isValidData(data)) return;
+
             peer.updatePeerInfo(data);
 
             if (data.broadcast) {
@@ -2529,10 +2599,37 @@ function startServer() {
             }
         });
 
+        socket.on('updateRoomNotifications', (dataObject, cb) => {
+            if (!roomExists(socket)) return;
+
+            if (config.integrations?.email?.notify !== true) {
+                const message =
+                    'Email notifications are disabled by the admin. Enable this feature in your self-hosted instance for full functionality.';
+                log.debug(message);
+                return cb({ error: message });
+            }
+
+            const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return;
+
+            const room = getRoom(socket);
+
+            const isPresenter = isPeerPresenter(socket.room_id, socket.id, data.peer_name, data.peer_uuid);
+
+            if (!isPresenter) return;
+
+            room.updateRoomNotifications(data);
+
+            return cb({ message: true });
+        });
+
         socket.on('updateRoomModerator', (dataObject) => {
             if (!roomExists(socket)) return;
 
             const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return;
 
             const room = getRoom(socket);
 
@@ -2563,6 +2660,8 @@ function startServer() {
             if (!roomExists(socket)) return;
 
             const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return;
 
             const room = getRoom(socket);
 
@@ -2596,6 +2695,8 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
+            if (!Validator.isValidData(data)) return;
+
             if (!isValidFileName(data.fileName)) {
                 log.debug('File name not valid', data);
                 return;
@@ -2621,6 +2722,8 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
+            if (!Validator.isValidData(data)) return;
+
             const room = getRoom(socket);
 
             room.broadCast(socket.id, 'fileAbort', data);
@@ -2631,6 +2734,8 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
+            if (!Validator.isValidData(data)) return;
+
             const room = getRoom(socket);
 
             room.broadCast(socket.id, 'receiveFileAbort', data);
@@ -2640,6 +2745,8 @@ function startServer() {
             if (!roomExists(socket)) return;
 
             const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return;
 
             if (data.action == 'open' && !isValidHttpURL(data.video_url)) {
                 log.debug('Video src not valid', data);
@@ -2676,6 +2783,8 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
+            if (!Validator.isValidData(data)) return;
+
             const room = getRoom(socket);
 
             log.debug('Whiteboard', data);
@@ -2686,6 +2795,8 @@ function startServer() {
             if (!roomExists(socket)) return;
 
             const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return;
 
             log.debug('Video off data', data.peer_name);
 
@@ -2698,6 +2809,8 @@ function startServer() {
             if (!roomExists(socket)) return;
 
             const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return;
 
             log.debug('Recording action', data);
 
@@ -2726,6 +2839,8 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
+            if (!Validator.isValidData(data)) return;
+
             const { room, peer } = getRoomAndPeer(socket);
 
             const { peer_name } = peer || 'undefined';
@@ -2742,7 +2857,7 @@ function startServer() {
                 return;
             }
 
-            log.info('message', data);
+            log.debug('message', data);
 
             data.to_peer_id == 'all'
                 ? room.broadCast(socket.id, 'message', data)
@@ -2784,7 +2899,7 @@ function startServer() {
                 context.push({ role: 'assistant', content: message });
 
                 // Log the conversation details
-                log.info('ChatGPT Response', {
+                log.debug('ChatGPT Response', {
                     time,
                     room,
                     name,
@@ -2857,7 +2972,7 @@ function startServer() {
                 context.push({ role: 'assistant', content: message });
 
                 // Log the conversation details
-                log.info('DeepSeek Response', {
+                log.debug('DeepSeek Response', {
                     time,
                     room,
                     name,
@@ -3171,6 +3286,9 @@ function startServer() {
             }
 
             const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return cb(false);
+
             const { peer_name, peer_uuid, file } = data;
             const isPresenter = isPeerPresenter(socket.room_id, socket.id, peer_name, peer_uuid);
             if (!isPresenter) return cb(false);
@@ -3182,7 +3300,7 @@ function startServer() {
                 ? DEFAULT_HOST
                 : socket?.handshake?.headers?.host?.split(':')[0] || DEFAULT_HOST;
 
-            const rtmp = await room.startRTMP(socket.id, room, host, 1935, `../${rtmpDir}/${file}`);
+            const rtmp = await room.startRTMP(socket.id, room, host, 1935, `${rtmpDir}/${file}`);
 
             if (rtmp !== false) rtmpFileStreamsCount++;
 
@@ -3220,6 +3338,9 @@ function startServer() {
             }
 
             const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return cb(false);
+
             const { peer_name, peer_uuid, inputVideoURL } = data;
             const isPresenter = isPeerPresenter(socket.room_id, socket.id, peer_name, peer_uuid);
             if (!isPresenter) return cb(false);
@@ -3265,6 +3386,8 @@ function startServer() {
 
             const data = checkXSS(dataObject);
 
+            if (!Validator.isValidData(data)) return;
+
             const { question, options } = data;
 
             const room = getRoom(socket);
@@ -3286,6 +3409,8 @@ function startServer() {
             if (!roomExists(socket)) return;
 
             const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return;
 
             const { room, peer } = getRoomAndPeer(socket);
 
@@ -3318,6 +3443,8 @@ function startServer() {
             if (!roomExists(socket)) return;
 
             const data = checkXSS(dataObject);
+
+            if (!Validator.isValidData(data)) return;
 
             const { index, question, options } = data;
 
@@ -3390,7 +3517,11 @@ function startServer() {
         });
 
         socket.on('disconnect', (reason) => {
-            if (!roomExists(socket)) return;
+            if (!roomExists(socket)) {
+                // Clean up socket listeners even if room doesn't exist
+                socket.removeAllListeners();
+                return;
+            }
 
             const { room, peer } = getRoomAndPeer(socket);
 
@@ -3409,7 +3540,7 @@ function startServer() {
                 };
                 // Trigger a POST request when a user disconnects
                 axios
-                    .post(webhook.url, { event: 'disconnect', data })
+                    .post(webhook.url, { event: 'disconnect', data }, { timeout: 5000 })
                     .then((response) => log.debug('Disconnect event tracked:', response.data))
                     .catch((error) => log.error('Error tracking disconnect event:', error.message));
             }
@@ -3426,20 +3557,23 @@ function startServer() {
 
                 delete presenters[socket.room_id];
 
-                log.info('[Disconnect] - Last peer - current presenters grouped by roomId', presenters);
+                log.debug('[Disconnect] - Last peer - current presenters grouped by roomId', presenters);
 
                 const activeRooms = getActiveRooms();
 
-                log.info('[Disconnect] - Last peer - current active rooms', activeRooms);
+                log.debug('[Disconnect] - Last peer - current active rooms', activeRooms);
 
                 const activeStreams = getRTMPActiveStreams();
 
-                log.info('[Disconnect] - Last peer - current active RTMP streams', activeStreams);
+                log.debug('[Disconnect] - Last peer - current active RTMP streams', activeStreams);
             }
 
             removeIP(socket);
 
             socket.room_id = null;
+
+            // Clean up all socket event listeners to prevent memory leaks
+            socket.removeAllListeners();
         });
 
         socket.on('exitRoom', (_, callback) => {
@@ -3465,7 +3599,7 @@ function startServer() {
                 };
                 // Trigger a POST request when a user exits
                 axios
-                    .post(webhook.url, { event: 'exit', data })
+                    .post(webhook.url, { event: 'exit', data }, { timeout: 5000 })
                     .then((response) => log.debug('ExitRoom event tracked:', response.data))
                     .catch((error) => log.error('Error tracking exitRoom event:', error.message));
             }
@@ -3482,15 +3616,15 @@ function startServer() {
 
                 delete presenters[socket.room_id];
 
-                log.info('[REMOVE ME] - Last peer - current presenters grouped by roomId', presenters);
+                log.debug('[REMOVE ME] - Last peer - current presenters grouped by roomId', presenters);
 
                 const activeRooms = getActiveRooms();
 
-                log.info('[REMOVE ME] - Last peer - current active rooms', activeRooms);
+                log.debug('[REMOVE ME] - Last peer - current active rooms', activeRooms);
 
                 const activeStreams = getRTMPActiveStreams();
 
-                log.info('[REMOVE ME] - Last peer - current active RTMP streams', activeStreams);
+                log.debug('[REMOVE ME] - Last peer - current active RTMP streams', activeStreams);
             }
 
             removeIP(socket);
@@ -3513,7 +3647,7 @@ function startServer() {
                 };
 
                 axios
-                    .post(webhook.url, { event: 'join', data })
+                    .post(webhook.url, { event: 'join', data }, { timeout: 5000 })
                     .then((response) => log.debug('Join event tracked:', response.data))
                     .catch((error) => log.error('Error tracking join event:', error.message));
             }
@@ -3621,12 +3755,12 @@ function startServer() {
             if (room.isRtmpFileStreamerActive()) {
                 room.stopRTMP();
                 rtmpFileStreamsCount--;
-                log.info('[REMOVE ME] - Stop RTMP Stream From FIle', rtmpFileStreamsCount);
+                log.debug('[REMOVE ME] - Stop RTMP Stream From FIle', rtmpFileStreamsCount);
             }
             if (room.isRtmpUrlStreamerActive()) {
                 room.stopRTMPfromURL();
                 rtmpUrlStreamsCount--;
-                log.info('[REMOVE ME] - Stop RTMP Stream From URL', rtmpUrlStreamsCount);
+                log.debug('[REMOVE ME] - Stop RTMP Stream From URL', rtmpUrlStreamsCount);
             }
         }
     }
@@ -3651,7 +3785,7 @@ function startServer() {
                 // Presenter not in the presenters config list, disconnected, or peer_id changed...
                 for (const [existingPeerID, presenter] of Object.entries(presenters[room_id] || {})) {
                     if (presenter.peer_name === peer_name) {
-                        log.info('Presenter found', {
+                        log.debug('Presenter found', {
                             room: room_id,
                             peer_id: existingPeerID,
                             peer_name: peer_name,
@@ -3985,15 +4119,19 @@ function startServer() {
     }
 
     function getIP(req) {
-        return req.headers['x-forwarded-for'] || req.headers['X-Forwarded-For'] || req.socket.remoteAddress || req.ip;
+        const forwarded = req.headers['x-forwarded-for'] || req.headers['X-Forwarded-For'];
+        if (forwarded) {
+            return forwarded.split(',')[0].trim();
+        }
+        return req.socket.remoteAddress || req.ip;
     }
 
     function getIpSocket(socket) {
-        return (
-            socket.handshake.headers['x-forwarded-for'] ||
-            socket.handshake.headers['X-Forwarded-For'] ||
-            socket.handshake.address
-        );
+        const forwarded = socket.handshake.headers['x-forwarded-for'] || socket.handshake.headers['X-Forwarded-For'];
+        if (forwarded) {
+            return forwarded.split(',')[0].trim();
+        }
+        return socket.handshake.address;
     }
 
     function updateHostAuthenticatedFlag() {
@@ -4003,7 +4141,7 @@ function startServer() {
     function allowedIP(ip) {
         const authorizedIPs = authHost.getAuthorizedIPs();
         const authorizedIP = authHost.isAuthorizedIP(ip);
-        log.info('Allowed IPs', {
+        log.debug('Allowed IPs', {
             ip: ip,
             authorizedIP: authorizedIP,
             authorizedIPs: authorizedIPs,
@@ -4017,7 +4155,7 @@ function startServer() {
             if (ip && allowedIP(ip)) {
                 authHost.deleteIP(ip);
                 hostCfg.authenticated = false;
-                log.info('Remove IP from auth', {
+                log.debug('Remove IP from auth', {
                     removedIp: ip,
                     authorizedIps: authHost.getAuthorizedIPs(),
                 });
@@ -4026,14 +4164,135 @@ function startServer() {
     }
 }
 
+// ####################################################
+// GRACEFUL SHUTDOWN HANDLERS
+// ####################################################
+
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal) {
+    if (isShuttingDown) {
+        log.warn(`${signal} received again, forcing exit...`);
+        process.exit(1);
+    }
+
+    isShuttingDown = true;
+    log.info(`${signal} received, starting graceful shutdown...`);
+
+    try {
+        // 1. Stop accepting new connections
+        log.debug('Closing HTTP server...');
+        server.close(() => {
+            log.info('HTTP server closed');
+        });
+
+        // 2. Close all active rooms and notify peers
+        log.debug(`Closing ${roomList.size} active rooms...`);
+        for (const [roomId, room] of roomList.entries()) {
+            try {
+                // Notify all peers in the room
+                room.sendToAll('serverShutdown', { message: 'Server is shutting down' });
+
+                // Stop any active RTMP streams
+                if (room.isRtmpFileStreamerActive()) {
+                    await room.stopRTMP();
+                }
+                if (room.isRtmpUrlStreamerActive()) {
+                    await room.stopRTMPfromURL();
+                }
+
+                // Remove all peers from the room
+                const peers = room.getPeers();
+                for (const [peerId] of peers) {
+                    room.removePeer(peerId);
+                }
+
+                roomList.delete(roomId);
+            } catch (err) {
+                log.error(`Error closing room ${roomId}:`, err.message);
+            }
+        }
+
+        // 3. Close all RTMP streams
+        log.debug(`Closing ${Object.keys(streams).length} RTMP streams...`);
+        for (const [key, stream] of Object.entries(streams)) {
+            try {
+                if (stream && typeof stream.end === 'function') {
+                    stream.end();
+                }
+                delete streams[key];
+            } catch (err) {
+                log.error(`Error closing RTMP stream ${key}:`, err.message);
+            }
+        }
+
+        // 4. Disconnect all Socket.IO clients
+        log.debug('Disconnecting all Socket.IO clients...');
+        const sockets = await io.fetchSockets();
+        for (const socket of sockets) {
+            socket.disconnect(true);
+        }
+
+        // 5. Close Socket.IO server
+        log.debug('Closing Socket.IO server...');
+        io.close();
+
+        // 6. Close all mediasoup workers
+        log.debug(`Closing ${workers.length} mediasoup workers...`);
+        for (const worker of workers) {
+            try {
+                worker.close();
+            } catch (err) {
+                log.error('Error closing mediasoup worker:', err.message);
+            }
+        }
+
+        // 7. Cleanup HTML injector
+        log.debug('Cleaning up HTML injector...');
+        htmlInjector.cleanup();
+
+        // 8. Close ngrok if active
+        if (config?.integrations?.ngrok?.enabled) {
+            log.debug('Closing ngrok tunnel...');
+            await ngrok.kill();
+        }
+
+        log.info('Graceful shutdown completed successfully');
+        process.exit(0);
+    } catch (err) {
+        log.error('Error during graceful shutdown:', err.message);
+        process.exit(1);
+    }
+}
+
+// Set a timeout for forced shutdown if graceful shutdown takes too long
+function forceShutdown(signal) {
+    setTimeout(() => {
+        log.error(`Graceful shutdown timeout exceeded, forcing exit...`);
+        process.exit(1);
+    }, 30000); // 30 seconds timeout
+}
+
 process.on('SIGINT', () => {
     log.debug('PROCESS', 'SIGINT');
-    htmlInjector.cleanup();
-    process.exit();
+    forceShutdown('SIGINT');
+    gracefulShutdown('SIGINT');
 });
 
 process.on('SIGTERM', () => {
     log.debug('PROCESS', 'SIGTERM');
-    htmlInjector.cleanup();
-    process.exit();
+    forceShutdown('SIGTERM');
+    gracefulShutdown('SIGTERM');
+});
+
+// Handle uncaught exceptions and rejections
+process.on('uncaughtException', (err) => {
+    log.error('Uncaught Exception:', err);
+    forceShutdown('uncaughtException');
+    gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    log.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    // Don't exit on unhandled rejection, just log it
 });

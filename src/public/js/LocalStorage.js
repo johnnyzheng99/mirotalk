@@ -34,13 +34,14 @@ class LocalStorage {
             dominant_speaker_focus: false, // Focus on dominant speaker
             mic_noise_suppression: true, // Noise suppression using RNNoise
             video_fps: 0, // default 1280x768 30fps
+            aspect_ratio: 0, // default (adaptive)
             screen_optimization: 1, // default detail (1): For high fidelity (screen sharing with text/graphics) || motion (2): For high frame rate (video playback, game streaming)
             screen_fps: 3, // default 1920x1080 15fps
             broadcasting: false, // default false (one to many a/v streaming)
             lobby: false, // default false
             pitch_bar: true, // volume indicator
             sounds: true, // room notify sounds
-            keep_buttons_visible: false, // Keep buttons always visible
+            keep_buttons_visible: true, // Keep buttons always visible
             keyboard_shortcuts: false, // keyboard shortcuts
             host_only_recording: false, // presenter
             rec_server: false, // The recording will be stored on the server rather than locally
@@ -152,7 +153,7 @@ class LocalStorage {
     }
 
     getItemLocalStorage(key) {
-        localStorage.getItem(key);
+        return localStorage.getItem(key);
     }
 
     getObjectLocalStorage(name) {

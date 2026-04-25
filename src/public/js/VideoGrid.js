@@ -68,20 +68,27 @@ function resizeVideoMedia() {
 
     resetZoom();
 
-    // loop (i recommend you optimize this)
-    let i = 1;
-    while (i < 5000) {
-        let w = Area(i, Cameras.length, Width, Height, Margin);
-        if (w === false) {
-            max = i - 1;
-            break;
+    // Optimized: binary search for best tile size
+    let low = 1;
+    let high = Math.min(Width, Height);
+    let best = 1;
+    while (low <= high) {
+        let mid = Math.floor((low + high) / 2);
+        let w = Area(mid, Cameras.length, Width, Height, Margin);
+        if (w !== false) {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
         }
-        i++;
     }
 
-    max = max - Margin * 2;
+    max = best - Margin * 2;
     setWidth(Cameras, max, bigWidth, Margin, Height, isOneVideoElement);
-    document.documentElement.style.setProperty('--vmi-wh', max / 3 + 'px');
+
+    // When alone, use fixed avatar size; otherwise proportional to tile
+    const avatarSize = isOneVideoElement ? Math.min(200, Math.max(120, Height * 0.25)) : max / 3;
+    document.documentElement.style.setProperty('--vmi-wh', avatarSize + 'px');
 }
 
 function resetZoom() {
@@ -115,57 +122,6 @@ const MOBILE_BREAKPOINT = 500;
 const TABLET_BREAKPOINT = 580;
 const DESKTOP_BREAKPOINT = 730;
 const CUSTOM_BREAKPOINT = 680;
-
-// ####################################################
-// RESPONSIVE MAIN BUTTONS
-// ####################################################
-
-const mainButtonsBar = document.querySelectorAll('#control button');
-const mainButtonsIcon = document.querySelectorAll('#control button i');
-
-function resizeMainButtons() {
-    const windowWidth = window.innerWidth;
-    const windowHeight = window.innerHeight;
-    const isButtonsBarVertical = BtnsBarPosition.selectedIndex === 0;
-    //console.log('Window size', { width: windowWidth, height: windowWidth});
-    if (isButtonsBarVertical) {
-        // Main buttons vertical align
-        if (windowHeight <= MOBILE_BREAKPOINT) {
-            setStyles(mainButtonsBar, '0.7rem', '4px', mainButtonsIcon, '0.8rem', '40px');
-        } else if (windowHeight <= TABLET_BREAKPOINT) {
-            setStyles(mainButtonsBar, '0.9rem', '4px', mainButtonsIcon, '1rem', '45px');
-        } else if (windowHeight <= DESKTOP_BREAKPOINT) {
-            setStyles(mainButtonsBar, '1rem', '5px', mainButtonsIcon, '1.1rem', '50px');
-        } else {
-            // > DESKTOP_BREAKPOINT
-            setStyles(mainButtonsBar, '1rem', '10px', mainButtonsIcon, '1.2rem', '60px');
-        }
-    } else {
-        // Main buttons horizontal align
-        if (windowWidth <= MOBILE_BREAKPOINT) {
-            setStyles(mainButtonsBar, '0.7rem', '4px', mainButtonsIcon, '0.8rem');
-        } else if (windowWidth <= TABLET_BREAKPOINT) {
-            setStyles(mainButtonsBar, '0.9rem', '4px', mainButtonsIcon, '1rem');
-        } else if (windowWidth <= DESKTOP_BREAKPOINT) {
-            setStyles(mainButtonsBar, '1rem', '5px', mainButtonsIcon, '1.1rem');
-        } else {
-            // > DESKTOP_BREAKPOINT
-            setStyles(mainButtonsBar, '1rem', '10px', mainButtonsIcon, '1.2rem');
-        }
-    }
-    //
-    function setStyles(elements, fontSize, padding, icons, fontSizeIcon, bWidth = null) {
-        if (bWidth) document.documentElement.style.setProperty('--btns-width', bWidth);
-
-        elements.forEach(function (element) {
-            element.style.fontSize = fontSize;
-            element.style.padding = padding;
-        });
-        icons.forEach(function (icon) {
-            icon.style.fontSize = fontSizeIcon;
-        });
-    }
-}
 
 // ####################################################
 // RESPONSIVE CHAT
@@ -209,13 +165,15 @@ window.addEventListener(
     'load',
     function (event) {
         resizeVideoMedia();
-        resizeMainButtons();
-        window.onresize = function () {
-            resizeVideoMedia();
-            resizeMainButtons();
-            resizeChatRoom();
-            resizeTranscriptionRoom();
-        };
+        let resizeTimeout;
+        window.addEventListener('resize', function () {
+            if (resizeTimeout) cancelAnimationFrame(resizeTimeout);
+            resizeTimeout = requestAnimationFrame(function () {
+                resizeVideoMedia();
+                resizeChatRoom();
+                resizeTranscriptionRoom();
+            });
+        });
     },
     false
 );

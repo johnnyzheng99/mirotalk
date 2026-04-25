@@ -9,7 +9,7 @@
  * @license For commercial or closed source, contact us at license.mirotalk@gmail.com or purchase directly via CodeCanyon
  * @license CodeCanyon: https://codecanyon.net/item/mirotalk-sfu-webrtc-realtime-video-conferences/40769970
  * @author  Miroslav Pejic - miroslav.pejic.85@gmail.com
- * @version 1.9.76
+ * @version 2.0.94
  *
  */
 
@@ -324,6 +324,7 @@ class RoomClient {
         this.isEditorLocked = false;
         this.isEditorPinned = false;
         this.isSpeechSynthesisSupported = isSpeechSynthesisSupported;
+        this.isParticipantsOpen = false;
         this.speechInMessages = false;
         this.showChatOnMessage = true;
         this.isChatBgTransparent = false;
@@ -423,6 +424,14 @@ class RoomClient {
 
         this.debug = false;
         this.debug ? window.localStorage.setItem('debug', 'mediasoup*') : window.localStorage.removeItem('debug');
+
+        // TEST PURPOSES
+        this.test = {
+            device: {
+                enabled: false,
+                handlerName: 'Chrome111', // |Chrome74|Firefox120|Safari12|ReactNative106|
+            },
+        };
 
         console.log('06 ----> Load MediaSoup Client v', mediasoupClient.version);
         console.log('06.1 ----> PEER_ID', this.peer_id);
@@ -552,8 +561,12 @@ class RoomClient {
         if (!peer_info.peer_token) {
             // hack...
             for (let peer of Array.from(peers.keys()).filter((id) => id !== this.peer_id)) {
-                let peer_info = peers.get(peer).peer_info;
-                if (peer_info.peer_name == this.peer_name) {
+                const _peer_info = peers.get(peer).peer_info;
+                if (_peer_info.peer_name == this.peer_name) {
+                    if (_peer_info.peer_uuid === this.peer_uuid) {
+                        console.log('Same user reconnecting', this.peer_name);
+                        continue;
+                    }
                     console.log('07.0-WARNING ----> Username already in use');
                     return true;
                 }
@@ -645,7 +658,7 @@ class RoomClient {
             // ###################################################################################################
             if (room.recording) this.recording = room.recording;
             if (room.recording && room.recording.recSyncServerRecording) {
-                console.log('07.1 WARNING ----> SERVER SYNC RECORDING ENABLED!');
+                console.log('07.1 WARNING ----> SERVER SYNC RECORDING ENABLED!', this.recording);
                 this.recording.recSyncServerRecording = localStorageSettings.rec_server;
                 if (BUTTONS.settings.tabRecording && !room.config.hostOnlyRecording) {
                     show(roomRecordingServer);
@@ -788,8 +801,10 @@ class RoomClient {
 
         let device;
         try {
-            device = await this.mediasoupClient.Device.factory();
-            // device = await this.mediasoupClient.Device.factory({ handlerName: 'Safari12' }); // for testing only
+            device = this.test.device.enabled
+                ? await this.mediasoupClient.Device.factory({ handlerName: this.test.device.handlerName })
+                : await this.mediasoupClient.Device.factory();
+
             console.log('Device created successfully:', device.handlerName);
         } catch (error) {
             if (error.name === 'UnsupportedError') {
@@ -908,10 +923,10 @@ class RoomClient {
         });
 
         this.producerTransport.on('icegatheringstatechange', (state) => {
-            console.warn('Producer ICE gathering change state', {
-                state: state,
-                id: this.producerTransport.id,
-            });
+            const normalStates = new Set(['new', 'gathering', 'complete']);
+            normalStates.has(state)
+                ? console.log('Producer ICE gathering state', { state, id: this.producerTransport.id })
+                : console.warn('Unexpected Producer ICE gathering state', { state, id: this.producerTransport.id });
         });
 
         this.producerTransport.on('icecandidateerror', (error) => {
@@ -986,10 +1001,10 @@ class RoomClient {
         });
 
         this.consumerTransport.on('icegatheringstatechange', (state) => {
-            console.warn('Consumer ICE gathering change state', {
-                state: state,
-                id: this.consumerTransport.id,
-            });
+            const normalStates = new Set(['new', 'gathering', 'complete']);
+            normalStates.has(state)
+                ? console.log('Consumer ICE gathering state', { state, id: this.consumerTransport.id })
+                : console.warn('Unexpected Consumer ICE gathering state', { state, id: this.consumerTransport.id });
         });
 
         this.consumerTransport.on('icecandidateerror', (error) => {
@@ -1665,6 +1680,8 @@ class RoomClient {
                 console.log('09 ----> START AUDIO MEDIA');
                 await this.sleep(300);
                 await this.pauseAudioProducer();
+            } else {
+                setColor(startAudioButton, 'red');
             }
         }
 
@@ -1678,6 +1695,18 @@ class RoomClient {
             if (BUTTONS.main.startVideoButton) this.event(_EVENTS.stopVideo);
             this.updatePeerInfo(this.peer_name, this.peer_id, 'video', false);
             console.log('10 ----> VIDEO IS OFF');
+        }
+
+        if (!isEnumerateAudioDevices) {
+            hide(startAudioButton);
+            hide(stopAudioButton);
+            hide(startAudioDeviceDropdown);
+        }
+
+        if (!isEnumerateVideoDevices) {
+            hide(startVideoButton);
+            hide(stopVideoButton);
+            hide(startVideoDeviceDropdown);
         }
 
         if (this.joinRoomWithScreen && !this._moderator.screen_cant_share) {
@@ -1750,7 +1779,9 @@ class RoomClient {
             } else {
                 stream = screen
                     ? await navigator.mediaDevices.getDisplayMedia(mediaConstraints)
-                    : await navigator.mediaDevices.getUserMedia(mediaConstraints);
+                    : audio
+                      ? await this.getAudioStreamWithFallback(deviceId, mediaConstraints)
+                      : await navigator.mediaDevices.getUserMedia(mediaConstraints);
 
                 // Handle Virtual Background and Blur using MediaPipe
                 if (video && isMediaStreamTrackAndTransformerSupported) {
@@ -1813,13 +1844,16 @@ class RoomClient {
 
             const params = {
                 track,
+                headerExtensionOptions: {
+                    absCaptureTime: true,
+                },
                 appData: {
                     mediaType: type,
                 },
             };
 
             if (audio) {
-                console.log('AUDIO ENABLE OPUS');
+                console.log('AUDIO ENABLE OPUS (channelCount: 2)');
                 params.codecOptions = {
                     opusStereo: true,
                     opusDtx: true,
@@ -2203,7 +2237,11 @@ class RoomClient {
 
     disableRNNoiseSuppression() {
         if (this.RNNoiseProcessor) {
-            this.RNNoiseProcessor.stopProcessing();
+            try {
+                this.RNNoiseProcessor.stopProcessing();
+            } catch (err) {
+                // ignore
+            }
             this.RNNoiseProcessor = null;
             console.warn('RNNoiseProcessor already initialized, stopping previous instance.');
         }
@@ -2213,12 +2251,35 @@ class RoomClient {
     // AUDIO/VIDEO/SCREEN CONSTRAINTS
     // ####################################################
 
-    getAudioConstraints(deviceId) {
-        const audioConstraints = deviceId ? { deviceId: { exact: deviceId } } : true;
+    getAudioConstraints(deviceId, fallback = false) {
+        const audioConstraints = {
+            echoCancellation: true,
+            autoGainControl: true,
+            noiseSuppression: !BUTTONS.settings.customNoiseSuppression, // if disable using the built-in RNNoise suppression
+        };
+
+        if (!fallback) {
+            audioConstraints.sampleRate = { ideal: 48000 };
+            audioConstraints.channelCount = { ideal: 2 }; // Prefer stereo but keep device compatibility
+        }
+
+        if (deviceId) audioConstraints.deviceId = { exact: deviceId };
+
         return {
             audio: audioConstraints,
-            video: false,
         };
+    }
+
+    async getAudioStreamWithFallback(deviceId, mediaConstraints) {
+        try {
+            return await navigator.mediaDevices.getUserMedia(mediaConstraints);
+        } catch (err) {
+            console.warn('Audio getUserMedia failed, retrying with fallback constraints', {
+                name: err?.name,
+                message: err?.message,
+            });
+            return await navigator.mediaDevices.getUserMedia(this.getAudioConstraints(deviceId, true));
+        }
     }
 
     getCameraConstraints() {
@@ -2497,6 +2558,15 @@ class RoomClient {
                     });
                 }
             }
+        } else {
+            // No simulcast or SVC enabled.
+            encodings = [
+                {
+                    scaleResolutionDownBy: 1,
+                    maxBitrate: 5000000,
+                    dtx: true,
+                },
+            ];
         }
         return { encodings, codec };
     }
@@ -2510,6 +2580,13 @@ class RoomClient {
         button.id = id;
         button.className = className;
         return button;
+    }
+
+    createElement(id, type, className) {
+        const element = document.createElement(type);
+        element.id = id;
+        element.className = className;
+        return element;
     }
 
     getConsumerIdByProducerId(producerId) {
@@ -2562,15 +2639,13 @@ class RoomClient {
         return this.producerLabel.has(type);
     }
 
-    closeThenProduce(type, deviceId = null, swapCamera = false) {
+    async closeThenProduce(type, deviceId = null, swapCamera = false) {
         this.closeProducer(type, 'closeThenProduce');
-        setTimeout(async function () {
-            await rc.produce(type, deviceId, swapCamera);
-        }, 1000);
+        await rc.produce(type, deviceId, swapCamera);
     }
 
     async handleProducer(id, type, stream) {
-        let elem, vb, vp, ts, d, p, i, au, pip, fs, pm, pb, pn, pv, mv;
+        let elem, vb, vp, ts, d, p, i, au, pip, ha, fs, pm, pb, pn, pv, mv, st;
         switch (type) {
             case mediaType.video:
             case mediaType.screen:
@@ -2598,10 +2673,12 @@ class RoomClient {
                 vb.className = 'videoMenuBar hidden';
 
                 pip = this.createButton(id + '__pictureInPicture', html.pip);
+                ha = this.createButton(id + '__hideALL', html.hideALL + ' focusMode');
                 fs = this.createButton(id + '__fullScreen', html.fullScreen);
                 ts = this.createButton(id + '__snapshot', html.snapshot);
                 mv = this.createButton(id + '__mirror', html.mirror);
                 pn = this.createButton(id + '__pin', html.pin);
+                st = this.createElement(id + '__sessionTime', 'span', 'current-session-time notranslate');
                 vp = this.createButton(this.peer_id + '__vp', html.videoPrivacy);
                 au = this.createButton(
                     this.peer_id + '__audio',
@@ -2643,10 +2720,13 @@ class RoomClient {
                     vb.appendChild(pip);
                 BUTTONS.producerVideo.videoMirrorButton && vb.appendChild(mv);
                 BUTTONS.producerVideo.fullScreenButton && this.isVideoFullScreenSupported && vb.appendChild(fs);
+                BUTTONS.producerVideo.focusVideoButton && vb.appendChild(ha);
 
                 if (!this.isMobileDevice) vb.appendChild(pn);
 
+                vb.appendChild(st);
                 vb.appendChild(p);
+
                 d.appendChild(elem);
                 d.appendChild(pm);
                 d.appendChild(i);
@@ -2680,6 +2760,7 @@ class RoomClient {
                 this.handleDD(elem.id, this.peer_id, true);
                 this.handleTS(elem.id, ts.id);
                 this.handleMV(elem.id, mv.id);
+                this.handleHA(ha.id, d.id);
                 this.handlePN(elem.id, pn.id, d.id, isScreen);
                 this.handleZV(elem.id, d.id, this.peer_id);
                 this.handlePV(id + '___' + pv.id);
@@ -2699,6 +2780,7 @@ class RoomClient {
 
                 if (!this.isMobileDevice) {
                     this.setTippy(pn.id, 'Toggle Pin', 'bottom');
+                    this.setTippy(ha.id, 'Toggle Focus mode', 'bottom');
                     this.setTippy(mv.id, 'Toggle mirror', 'bottom');
                     this.setTippy(pip.id, 'Toggle picture in picture', 'bottom');
                     this.setTippy(ts.id, 'Snapshot', 'bottom');
@@ -2950,12 +3032,8 @@ class RoomClient {
     // CONSUMER
     // ####################################################
 
-    async consume(producer_id, peer_name, peer_info, type) {
+    async consume(producer_id, peer_name, peer_info, type, allowRecover = true) {
         try {
-            wbUpdate();
-
-            this.editorUpdate();
-
             const { consumer, stream, kind } = await this.getConsumeStream(producer_id, peer_info.peer_id, type);
 
             console.log('CONSUMER MEDIA TYPE ----> ' + type);
@@ -2966,12 +3044,28 @@ class RoomClient {
             await this.handleConsumer(consumer.id, type, stream, peer_name, peer_info);
 
             // https://mediasoup.discourse.group/t/create-server-side-consumers-with-paused-true/244
-            try {
-                const response = await this.socket.request('resumeConsumer', { consumer_id: consumer.id, type });
-                console.log('Consumer resumed', response);
-            } catch (error) {
-                console.error('Error resuming consumer', error);
+            const resumed = await this.resumeConsumerWithRetry(consumer.id, type);
+            if (!resumed) {
+                if (allowRecover) {
+                    console.warn('Consumer resume failed, attempting consumer recovery', {
+                        consumer_id: consumer.id,
+                        producer_id,
+                        type,
+                    });
+                    this.removeConsumer(consumer.id, consumer.kind);
+                    await this.sleep(400);
+                    return await this.consume(producer_id, peer_name, peer_info, type, false);
+                }
+                throw new Error(`Failed to resume consumer after retries [${consumer.id}]`);
             }
+
+            if (kind === 'video' && isParticipantsListOpen) {
+                await getRoomParticipants();
+            }
+
+            wbUpdate();
+
+            this.editorUpdate();
 
             consumer.on('trackended', () => {
                 console.log('Consumer track end', { id: consumer.id, type });
@@ -2982,10 +3076,6 @@ class RoomClient {
                 console.log('Consumer transport close', { id: consumer.id, type });
                 this.removeConsumer(consumer.id, consumer.kind);
             });
-
-            if (kind === 'video' && isParticipantsListOpen) {
-                await getRoomParticipants();
-            }
         } catch (error) {
             console.error('Error in consume', error);
 
@@ -3034,6 +3124,33 @@ class RoomClient {
         };
     }
 
+    async resumeConsumerWithRetry(consumerId, type, maxAttempts = 3) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const response = await this.socket.request('resumeConsumer', { consumer_id: consumerId, type });
+                console.log('Consumer resumed', {
+                    consumer_id: consumerId,
+                    type,
+                    attempt,
+                    response,
+                });
+                return true;
+            } catch (error) {
+                console.warn('Error resuming consumer', {
+                    consumer_id: consumerId,
+                    type,
+                    attempt,
+                    maxAttempts,
+                    error: error?.message || error,
+                });
+                if (attempt < maxAttempts) {
+                    await this.sleep(300 * Math.pow(2, attempt - 1));
+                }
+            }
+        }
+        return false;
+    }
+
     async handleConsumer(id, type, stream, peer_name, peer_info) {
         let elem, vb, d, p, i, cm, au, pip, fs, ts, sf, sm, sv, gl, ban, ko, pb, pm, pv, pn, ha, mv;
 
@@ -3075,11 +3192,14 @@ class RoomClient {
                 eDiv = document.createElement('div');
                 eDiv.className = 'expand-video';
 
-                eBtn = this.createButton(remotePeerId + '_videoExpandBtn', html.expand);
+                eBtn = this.createButton(
+                    remotePeerId + (type === mediaType.screen ? '_screen_' : '_video_') + '_expandBtn',
+                    html.expand
+                );
 
                 eVc = document.createElement('div');
                 eVc.className = 'expand-video-content';
-                eVc.id = id + '_videoExpandContent';
+                eVc.id = remotePeerId + (type === mediaType.screen ? '_screen_' : '_video_') + '_videoExpandContent';
 
                 pip = this.createButton(id + '__pictureInPicture', html.pip);
                 mv = this.createButton(id + '__videoMirror', html.mirror);
@@ -3257,7 +3377,12 @@ class RoomClient {
                 elem.setAttribute('id', id);
                 elem.setAttribute('volumeBar', remotePeerId + '___pVolume');
                 elem.autoplay = true;
-                elem.audio = 1.0;
+                elem.volume = 1.0;
+
+                if (!this.hasAudioTrack(stream)) {
+                    elem.muted = true;
+                }
+
                 this.remoteAudioEl.appendChild(elem);
 
                 await this.attachMediaStream(elem, stream, type, 'Consumer');
@@ -3355,7 +3480,7 @@ class RoomClient {
 
     setVideoOff(peer_info, remotePeer = false) {
         //console.log('setVideoOff', peer_info);
-        let d, vb, i, h, au, sf, sm, sv, gl, ban, ko, p, pm, pb, pv;
+        let d, vb, i, h, au, sf, sm, sv, gl, ban, ko, p, pm, pb, pv, st;
 
         const { peer_id, peer_name, peer_avatar, peer_audio, peer_presenter } = peer_info;
 
@@ -3385,6 +3510,8 @@ class RoomClient {
             gl = this.createButton('remotePeer___' + peer_id + '___geoLocation', html.geolocation);
             ban = this.createButton('remotePeer___' + peer_id + '___ban', html.ban);
             ko = this.createButton('remotePeer___' + peer_id + '___kickOut', html.kickOut);
+        } else {
+            st = this.createElement(peer_id + '__sessionTime', 'span', 'current-session-time notranslate');
         }
 
         i = document.createElement('img');
@@ -3420,6 +3547,8 @@ class RoomClient {
         BUTTONS.videoOff.audioVolumeInput && vb.appendChild(pv);
 
         vb.appendChild(au);
+        if (!remotePeer) vb.appendChild(st);
+
         d.appendChild(i);
         d.appendChild(p);
         d.appendChild(h);
@@ -3550,9 +3679,46 @@ class RoomClient {
             this._isConnected = false;
             if (this.consumerTransport) this.consumerTransport.close();
             if (this.producerTransport) this.producerTransport.close();
-            this.socket.off('disconnect');
-            this.socket.off('newProducers');
-            this.socket.off('consumerClosed');
+            if (this.socket) {
+                this.socket.off('disconnect');
+                this.socket.off('newProducers');
+                this.socket.off('consumerClosed');
+                this.socket.off('connect');
+                this.socket.off('connect_error');
+                this.socket.off('setVideoOff');
+                this.socket.off('removeMe');
+                this.socket.off('refreshParticipantsCount');
+                this.socket.off('message');
+                this.socket.off('roomAction');
+                this.socket.off('roomPassword');
+                this.socket.off('roomLobby');
+                this.socket.off('cmd');
+                this.socket.off('peerAction');
+                this.socket.off('updatePeerInfo');
+                this.socket.off('fileInfo');
+                this.socket.off('file');
+                this.socket.off('shareVideoAction');
+                this.socket.off('fileAbort');
+                this.socket.off('receiveFileAbort');
+                this.socket.off('wbCanvasToJson');
+                this.socket.off('whiteboardAction');
+                this.socket.off('audioVolume');
+                this.socket.off('dominantSpeaker');
+                this.socket.off('updateRoomModerator');
+                this.socket.off('updateRoomModeratorALL');
+                this.socket.off('recordingAction');
+                this.socket.off('endRTMP');
+                this.socket.off('errorRTMP');
+                this.socket.off('endRTMPfromURL');
+                this.socket.off('errorRTMPfromURL');
+                this.socket.off('updatePolls');
+                this.socket.off('editorChange');
+                this.socket.off('editorActions');
+                this.socket.off('editorUpdate');
+                this.socket.io.off('reconnect_attempt');
+                this.socket.io.off('reconnect');
+                this.socket.io.off('reconnect_failed');
+            }
         };
 
         if (!offline) {
@@ -3628,8 +3794,12 @@ class RoomClient {
     }
 
     runOnNextUserActivation(callback) {
+        let fired = false;
+
         const fire = (e) => {
-            cleanup();
+            if (fired) return; // Prevent duplicate calls
+            fired = true;
+
             try {
                 // Call synchronously to keep the user-activation
                 callback(e);
@@ -3637,6 +3807,7 @@ class RoomClient {
                 console.error('runOnNextUserActivation callback error:', err);
             }
         };
+
         const cleanup = () => {
             window.removeEventListener('pointerdown', fire, true);
             window.removeEventListener('click', fire, true);
@@ -3644,12 +3815,17 @@ class RoomClient {
             window.removeEventListener('touchstart', fire, true);
             window.removeEventListener('keydown', fire, true);
         };
+
+        // Note: 'once: true' auto-removes listeners, but we return cleanup for manual removal if needed
         const opts = { capture: true, once: true, passive: true };
         window.addEventListener('pointerdown', fire, opts);
         window.addEventListener('click', fire, opts);
         window.addEventListener('mousedown', fire, opts);
         window.addEventListener('touchstart', fire, opts);
         window.addEventListener('keydown', fire, opts);
+
+        // Return cleanup function for manual removal if needed (e.g., component unmount)
+        return cleanup;
     }
 
     async changeAudioDestination(audioElement = false) {
@@ -3659,11 +3835,16 @@ class RoomClient {
         // Defer until a user gesture if needed
         if (!this.hasUserActivation()) {
             this.pendingSinkId = sinkId;
-            this.userLog('info', 'Click once to apply the selected speaker', 'top-end', 3000);
-            this.runOnNextUserActivation(() => {
+            console.warn('Click once to apply the selected speaker');
+            this.runOnNextUserActivation(async () => {
                 const els = audioElement ? [audioElement] : this.remoteAudioEl.querySelectorAll('audio');
-                els.forEach((el) => this.attachSinkId(el, this.pendingSinkId));
-                this.pendingSinkId = null;
+                for (const el of els) {
+                    await this.attachSinkId(el, this.pendingSinkId);
+                }
+                // Clear only if all succeeded or if pendingSinkId wasn't changed
+                if (this.pendingSinkId === sinkId) {
+                    this.pendingSinkId = null;
+                }
             });
             return;
         }
@@ -3684,7 +3865,13 @@ class RoomClient {
 
         return elem
             .setSinkId(sinkId)
-            .then(() => console.log(`Success, audio output device attached: ${sinkId}`))
+            .then(() => {
+                console.log(`Success, audio output device attached: ${sinkId}`);
+                // Clear pending sink id after successful attachment
+                if (this.pendingSinkId === sinkId) {
+                    this.pendingSinkId = null;
+                }
+            })
             .catch((err) => {
                 console.error('Attach SinkId error: ', err);
                 const speakerSel = this.getId('speakerSelect');
@@ -3696,7 +3883,12 @@ class RoomClient {
                     // Retry on next user gesture
                     this.userLog('info', 'Click once to allow changing the speaker', 'top-end', 4000);
                     this.pendingSinkId = sinkId;
-                    this.runOnNextUserActivation(() => this.attachSinkId(elem, this.pendingSinkId));
+                    this.runOnNextUserActivation(() => {
+                        // Check if pendingSinkId is still set before retrying
+                        if (this.pendingSinkId === sinkId) {
+                            this.attachSinkId(elem, this.pendingSinkId);
+                        }
+                    });
                 } else {
                     this.userLog('warning', 'Attach SinkId error', err, 'top-end', 6000);
                 }
@@ -3763,7 +3955,7 @@ class RoomClient {
     }
 
     isValidEmail(email) {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
         return emailRegex.test(email);
     }
 
@@ -4142,12 +4334,6 @@ class RoomClient {
     changeBtnsBarPosition(position) {
         switch (position) {
             case 'vertical':
-                document.documentElement.style.setProperty('--btns-top', '50%');
-                document.documentElement.style.setProperty('--btns-right', '0%');
-                document.documentElement.style.setProperty('--btns-left', '10px');
-                document.documentElement.style.setProperty('--btns-margin-left', '0px');
-                document.documentElement.style.setProperty('--btns-width', '60px');
-                document.documentElement.style.setProperty('--btns-flex-direction', 'column');
                 // bottomButtons horizontally
                 document.documentElement.style.setProperty('--bottom-btns-top', 'auto');
                 document.documentElement.style.setProperty('--bottom-btns-left', '50%');
@@ -4158,12 +4344,6 @@ class RoomClient {
                 document.documentElement.style.setProperty('--bottom-btns-flex-direction', 'row');
                 break;
             case 'horizontal':
-                document.documentElement.style.setProperty('--btns-top', '95%');
-                document.documentElement.style.setProperty('--btns-right', '25%');
-                document.documentElement.style.setProperty('--btns-left', '50%');
-                document.documentElement.style.setProperty('--btns-margin-left', '-240px');
-                document.documentElement.style.setProperty('--btns-width', '480px');
-                document.documentElement.style.setProperty('--btns-flex-direction', 'row');
                 // bottomButtons vertically
                 document.documentElement.style.setProperty('--bottom-btns-top', '50%');
                 document.documentElement.style.setProperty('--bottom-btns-left', '15px');
@@ -4917,6 +5097,14 @@ class RoomClient {
         resizeChatRoom();
     }
 
+    updateChatFooterVisibility() {
+        const chatFooter = document.querySelector('.chat-message');
+        const peopleList = document.querySelector('#plist') || document.querySelector('.people-list');
+        if (!chatFooter || !peopleList) return;
+        const isFullWidth = window.innerWidth <= 600 && peopleList.offsetWidth >= window.innerWidth * 0.98;
+        elemDisplay(chatFooter, !isFullWidth);
+    }
+
     toggleShowParticipants() {
         const plist = this.getId('plist');
         const chat = this.getId('chat');
@@ -4929,6 +5117,22 @@ class RoomClient {
         this.toggleChatHistorySize(isParticipantsListHidden && (this.isChatPinned || this.isChatMaximized));
         plist.style.width = this.isChatPinned || this.isMobileDevice ? '100%' : '300px';
         plist.style.position = this.isMobileDevice ? 'fixed' : 'absolute';
+        this.updateChatFooterVisibility();
+    }
+
+    async toggleParticipants() {
+        this.isParticipantsOpen = !this.isParticipantsOpen;
+        if (!this.isParticipantsOpen && this.isChatOpen) {
+            this.toggleChat();
+            return;
+        }
+        if (!this.isChatOpen) {
+            this.toggleChat();
+            await this.sleep(500);
+        }
+        if ((isDesktopDevice && this.isChatPinned) || !isDesktopDevice) {
+            this.toggleShowParticipants();
+        }
     }
 
     toggleChatHistorySize(max = true) {
@@ -5034,7 +5238,7 @@ class RoomClient {
 
     toggleChatEmoji() {
         this.getId('chatEmoji').classList.toggle('show');
-        this.isChatEmojiOpen = this.isChatEmojiOpen ? false : true;
+        this.isChatEmojiOpen = !this.isChatEmojiOpen;
         this.getId('chatEmojiButton').style.color = this.isChatEmojiOpen ? '#FFFF00' : '#FFFFFF';
     }
 
@@ -5445,6 +5649,8 @@ class RoomClient {
         }
 
         chatMessagesId++;
+        // Update empty chat notice after adding a message
+        updateChatEmptyNotice();
     }
 
     streamMessage(element, message, speed = 100) {
@@ -5504,7 +5710,7 @@ class RoomClient {
     deleteMessage(id) {
         Swal.fire({
             background: swalBackground,
-            position: 'center',
+            position: 'top',
             title: 'Delete this Message?',
             imageUrl: image.delete,
             showDenyButton: true,
@@ -5516,6 +5722,7 @@ class RoomClient {
             if (result.isConfirmed) {
                 this.getId(id).remove();
                 this.sound('delete');
+                updateChatEmptyNotice();
             }
         });
     }
@@ -5703,7 +5910,7 @@ class RoomClient {
         }
         Swal.fire({
             background: swalBackground,
-            position: 'center',
+            position: 'top',
             title: 'Clean up all chat Messages?',
             imageUrl: image.delete,
             showDenyButton: true,
@@ -5726,6 +5933,7 @@ class RoomClient {
                 this.chatMessages = [];
                 this.chatGPTContext = [];
                 this.deepSeekContext = [];
+                updateChatEmptyNotice();
                 this.sound('delete');
             }
         });
@@ -6362,6 +6570,53 @@ class RoomClient {
     // RECORDING
     // ####################################################
 
+    popupRecordingOnLeaveRoom() {
+        Swal.fire({
+            background: swalBackground,
+            position: 'center',
+            imageUrl: image.recording,
+            title: 'Recording is ON',
+            html: `
+                <div style="text-align:left;">
+                    <b>Please stop the recording before leaving the room.</b><br><br>
+                    If you leave the room while recording is active, the recording will be stopped automatically and downloaded to your device (if local recording is enabled).
+                </div>
+            `,
+            confirmButtonText: 'OK',
+            showClass: { popup: 'animate__animated animate__fadeInDown' },
+            hideClass: { popup: 'animate__animated animate__fadeOutUp' },
+        }).then((result) => {
+            if (result.isConfirmed) {
+                survey && survey.enabled ? leaveFeedback(true) : redirectOnLeave();
+            }
+        });
+    }
+
+    showRecServerSideAdvice() {
+        Swal.fire({
+            background: swalBackground,
+            position: 'center',
+            imageUrl: image.recording,
+            title: 'Server Sync Recording Enabled',
+            html: `
+                <div style="text-align:left;">
+                    <b>Your recording session will be stored on the server.</b><br><br>
+                    If you do not agree, please switch off this option.<br>
+                    The recording will then be stored in your browser and downloaded to your device after stopping.
+                </div>
+            `,
+            showDenyButton: true,
+            confirmButtonText: 'OK',
+            denyButtonText: 'Switch Off',
+            showClass: { popup: 'animate__animated animate__fadeInDown' },
+            hideClass: { popup: 'animate__animated animate__fadeOutUp' },
+        }).then((result) => {
+            if (result.isDenied) {
+                switchServerRecording.checked = false;
+            }
+        });
+    }
+
     toggleVideoAudioTabs(disabled = false) {
         tabAudioDevicesBtn.disabled = disabled;
         tabVideoDevicesBtn.disabled = disabled;
@@ -6653,13 +6908,13 @@ class RoomClient {
                             params: { fileName: rc.recServerFileName, durationMs },
                         });
                         console.log('Finalized (with duration fix) and uploaded to S3');
-                        userLog('success', 'Recording successfully uploaded to S3.', 'top-end', 3000);
+                        if (recShowInfo) userLog('success', 'Recording successfully uploaded to S3.', 'top-end', 3000);
                     } catch (error) {
                         let errorMessage = 'Finalization failed! ';
                         if (error.response) errorMessage += error.response.data?.message || 'Server error';
                         else if (error.request) errorMessage += 'No response from server';
                         else errorMessage += error.message;
-                        userLog('warning', errorMessage, 'top-end', 3000);
+                        if (recShowInfo) userLog('warning', errorMessage, 'top-end', 3000);
                     }
                 } else {
                     // Option Disk: if you don’t use S3 finalize, call a dedicated “fix” endpoint
@@ -6805,6 +7060,7 @@ class RoomClient {
     }
 
     showRecordingInfo(recType, recordingInfo, recordingMsg = '') {
+        if (!recShowInfo) return;
         if (window.localStorage.isReconnected === 'false') {
             Swal.fire({
                 background: swalBackground,
@@ -7917,10 +8173,15 @@ class RoomClient {
                 this.userLog('info', `${icons.moderator} Moderator: disconnect all on leave room ${status}`, 'top-end');
                 break;
             case 'recSyncServer':
-                this.userLog('info', `${icons.recSync} Server Sync Recording ${status}`, 'top-end');
+                active
+                    ? this.showRecServerSideAdvice()
+                    : this.userLog('info', `${icons.recording} Server sync recording ${status}`, 'top-end');
                 break;
             case 'customThemeKeep':
                 this.userLog('info', `${icons.theme} Custom theme keep ${status}`, 'top-end');
+                break;
+            case 'save_room_notifications':
+                this.userLog('success', 'Room notifications saved successfully', 'top-end');
                 break;
             default:
                 break;
@@ -7962,7 +8223,6 @@ class RoomClient {
                 }
                 this.RoomLobbyAccepted = true;
                 await this.joinAllowed(data.room);
-                control.style.display = 'flex';
                 bottomButtons.style.display = 'flex';
                 this.msgPopup('info', 'Your join meeting request was accepted by the moderator', 3000, 'top');
                 break;
@@ -8287,12 +8547,7 @@ class RoomClient {
             showClass: { popup: 'animate__animated animate__fadeInDown' },
             hideClass: { popup: 'animate__animated animate__fadeOutUp' },
         }).then((result) => {
-            if (result.isConfirmed) {
-                control.style.display = 'none';
-                bottomButtons.style.display = 'none';
-            } else {
-                this.exit();
-            }
+            result.isConfirmed ? (bottomButtons.style.display = 'none') : this.exit();
         });
     }
 
@@ -8415,7 +8670,13 @@ class RoomClient {
         const inputElement = this.getId(volumeInputId);
 
         if (inputElement && audioPlayer) {
-            show(inputElement);
+            //
+            // Check if audio is enabled/disabled
+            const isAudioEnabled = isConsumer
+                ? !audioPlayer.muted && audioPlayer.volume > 0
+                : this.peer_info.peer_audio;
+
+            isAudioEnabled ? show(inputElement) : hide(inputElement);
             inputElement.value = 100;
 
             let volumeUpdateTimeout;
@@ -8457,10 +8718,8 @@ class RoomClient {
         if (audioPlayer) {
             if (this.isMobileDevice) {
                 audioPlayer.muted = volume === 0;
-                if (!audioPlayer.muted) {
-                    // Adjust playback rate as volume on mobile devices
-                    audioPlayer.playbackRate = Math.max(0.1, volume);
-                }
+                // Keep natural voice pitch; playbackRate is not a safe substitute for volume.
+                audioPlayer.volume = volume;
             } else {
                 // Set volume directly on desktop devices
                 audioPlayer.volume = volume;
@@ -8795,48 +9054,50 @@ class RoomClient {
     handleEmojiSound(cmd) {
         const path = '../sounds/emoji/';
         const ext = '.mp3';
+        const force = true; // force sound play even if sound effects are disabled
+
         switch (cmd.shortcodes) {
             case ':+1:':
             case ':ok_hand:':
-                this.sound('ok', true, path, ext);
+                this.sound('ok', force, path, ext);
                 break;
             case ':-1:':
-                this.sound('boo', true, path, ext);
+                this.sound('boo', force, path, ext);
                 break;
             case ':clap:':
-                this.sound('applause', true, path, ext);
+                this.sound('applause', force, path, ext);
                 break;
             case ':smiley:':
             case ':grinning:':
-                this.sound('smile', true, path, ext);
+                this.sound('smile', force, path, ext);
                 break;
             case ':joy:':
-                this.sound('laughs', true, path, ext);
+                this.sound('laughs', force, path, ext);
                 break;
             case ':tada:':
-                this.sound('congrats', true, path, ext);
+                this.sound('congrats', force, path, ext);
                 break;
             case ':open_mouth:':
-                this.sound('woah', true, path, ext);
+                this.sound('woah', force, path, ext);
                 break;
             case ':trumpet:':
-                this.sound('trombone', true, path, ext);
+                this.sound('trombone', force, path, ext);
                 break;
             case ':kissing_heart:':
-                this.sound('kiss', true, path, ext);
+                this.sound('kiss', force, path, ext);
                 break;
             case ':heart:':
             case ':hearts:':
-                this.sound('heart', true, path, ext);
+                this.sound('heart', force, path, ext);
                 break;
             case ':rocket:':
-                this.sound('rocket', true, path, ext);
+                this.sound('rocket', force, path, ext);
                 break;
             case ':sparkles:':
             case ':star:':
             case ':star2:':
             case ':dizzy:':
-                this.sound('tinkerbell', true, path, ext);
+                this.sound('tinkerbell', force, path, ext);
                 break;
             // ...
             default:
@@ -9382,13 +9643,6 @@ class RoomClient {
             const isSensitiveChat = !['all', 'ChatGPT', 'DeepSeek'].includes(peer_id) && title.length > 15;
             const truncatedTitle = isSensitiveChat ? `${title.substring(0, 10)}*****` : title;
             return `
-                <img class="all-participants-img" 
-                    style="border: var(--border); width: 43px; margin-right: 5px; cursor: pointer;"
-                    id="chatShowParticipantsList" 
-                    src="${image.users}"
-                    alt="participants"
-                    onclick="rc.toggleShowParticipants()" 
-                />
                 <a data-toggle="modal" data-target="#view_info">
                     <img src="${imgSrc}" alt="avatar" />
                 </a>
@@ -9453,13 +9707,12 @@ class RoomClient {
                     const li = messagePrivateListItems[i];
                     const itemFromId = li.getAttribute('data-from-id');
                     const itemToId = li.getAttribute('data-to-id');
-                    const shouldDisplay = itemFromId.includes(peer_id) || itemToId.includes(peer_id);
+                    const shouldDisplay =
+                        (itemFromId && itemFromId.includes(peer_id)) || (itemToId && itemToId.includes(peer_id));
                     li.style.display = shouldDisplay ? '' : 'none';
                 }
                 break;
         }
-
-        if (!this.isMobileDevice) setTippy('chatShowParticipantsList', 'Toggle participants list', 'bottom');
 
         const clickedElement = event ? event.target : null;
         if (!event || (clickedElement.tagName != 'BUTTON' && clickedElement.tagName != 'I')) {
@@ -9759,8 +10012,22 @@ class RoomClient {
                         case error.UNKNOWN_ERROR:
                             geoError = 'An unknown error occurred';
                             break;
-                        default:
+                        case 'NOT_SUPPORTED':
+                            geoError = 'Geolocation is not supported by this browser';
                             break;
+                        default:
+                            geoError =
+                                'Unable to retrieve your location. Please ensure location services are enabled in your device and browser settings, and try again';
+                            break;
+                    }
+                    // Add suggestion for unknown errors
+                    if (
+                        error.code === error.UNKNOWN_ERROR ||
+                        error.code === undefined ||
+                        geoError.startsWith('Unable to retrieve')
+                    ) {
+                        geoError +=
+                            ' If the problem persists, check your device and browser location permissions, and ensure you have a clear view of the sky (for GPS)';
                     }
                     rc.sendPeerGeoLocation(peer_id, 'geoLocationKO', `${rc.peer_name}: ${geoError}`);
                     rc.userLog('warning', geoError, 'top-end', 5000);
@@ -10650,6 +10917,68 @@ class RoomClient {
             this.userLog('error', 'Snapshot room error ' + err.message, 'top-end', 6000);
         }
     }
+
+    // ####################################################
+    // ROOM NOTIFICATIONS
+    // ####################################################
+
+    cleanNotifications() {
+        getId('notifyEmailInput').value = '';
+        getId('switchNotifyUserJoin').checked = false;
+        return true;
+    }
+
+    saveNotifications(validate = true) {
+        if (validate && !this.isValidNotifications()) return;
+
+        const data = this.getNotificationsData();
+
+        if (!data) return;
+
+        this.setNotificationsData(data);
+    }
+
+    setNotificationsData(data) {
+        this.socket.emit('updateRoomNotifications', data, (response) => {
+            response.error
+                ? this.cleanNotifications() && this.userLog('warning', response.error, 'top-end', 6000)
+                : this.roomMessage('save_room_notifications', true);
+        });
+    }
+
+    isValidNotifications() {
+        const notifyEmailInput = getId('notifyEmailInput');
+        if (!this.isValidEmail(notifyEmailInput.value)) {
+            notifyEmailInput.value = '';
+            this.userLog('warning', 'Email not valid', 'top-end', 6000);
+            return false;
+        }
+        return true;
+    }
+
+    getNotificationsData() {
+        const notifyEmailInput = getId('notifyEmailInput');
+        const switchNotifyUserJoin = getId('switchNotifyUserJoin');
+
+        return {
+            peer_name: this.peer_name,
+            peer_uuid: this.peer_uuid,
+            notifications: {
+                mode: {
+                    email: notifyEmailInput.value,
+                    //slack...
+                },
+                events: {
+                    join: switchNotifyUserJoin.checked,
+                    // leave...
+                },
+            },
+        };
+    }
+
+    // ####################################################
+    // HELPERS
+    // ####################################################
 
     toggleVideoMirror() {
         const peerVideo = this.getName(this.peer_id);

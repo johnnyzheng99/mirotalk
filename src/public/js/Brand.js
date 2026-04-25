@@ -25,6 +25,7 @@ const tryEasier = document.getElementById('tryEasier');
 const poweredBy = document.getElementById('poweredBy');
 const sponsors = document.getElementById('sponsors');
 const advertisers = document.getElementById('advertisers');
+const supportUs = document.getElementById('supportUs');
 const footer = document.getElementById('footer');
 
 const whoAreYouTitle = document.getElementById('whoAreYouTitle');
@@ -68,6 +69,7 @@ let BRAND = {
         poweredBy: true,
         sponsors: true,
         advertisers: true,
+        supportUs: true,
         footer: true,
     },
     whoAreYou: {
@@ -79,7 +81,7 @@ let BRAND = {
     },
     about: {
         imageUrl: '../images/favicon.ico',
-        title: '<strong>WebRTC v1.9.76</strong>',
+        title: '<strong>WebRTC v2.0.94</strong>',
         html: `
             <button 
                 id="support-button" 
@@ -97,10 +99,8 @@ let BRAND = {
                 Miroslav Pejic
             </a>
             <br /><br />
-
-            <br /><br />
             <hr />
-            <span>&copy; 2025 Cloud Meet, all rights reserved</span>
+            <span>&copy; 2026 Cloud Meet, all rights reserved</span>
             <hr />
         `,
     },
@@ -130,7 +130,7 @@ let BRAND = {
                 connectText: 'connect in < 5 seconds',
                 onlineText: 'We are online',
                 offlineText: 'We are offline',
-                poweredBy: 'Powered by Cloud meet',
+                poweredBy: 'Powered by Cloud Meet',
             },
             alert: {
                 enabled: false,
@@ -186,8 +186,19 @@ async function getBrand() {
 
 // BRAND configurations
 function setBrand(data) {
-    BRAND = data;
+    BRAND = mergeBrand(BRAND, data);
     console.log('Set Brand done');
+}
+
+function mergeBrand(current, updated) {
+    for (const key of Object.keys(updated)) {
+        if (!current.hasOwnProperty(key) || typeof updated[key] !== 'object') {
+            current[key] = updated[key];
+        } else {
+            mergeBrand(current[key], updated[key]);
+        }
+    }
+    return current;
 }
 
 // BRAND check
@@ -199,6 +210,7 @@ function checkBrand() {
     !BRAND.html.poweredBy && elementDisplay(poweredBy, false);
     !BRAND.html.sponsors && elementDisplay(sponsors, false);
     !BRAND.html.advertisers && elementDisplay(advertisers, false);
+    !BRAND.html.supportUs && elementDisplay(supportUs, false);
     !BRAND.html.footer && elementDisplay(footer, false);
 }
 

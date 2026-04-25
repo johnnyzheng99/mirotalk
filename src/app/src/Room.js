@@ -34,11 +34,21 @@ module.exports = class Room {
         this._hostOnlyRecording = false;
         // ##########################
         this.recording = {
-            recSyncServerToS3: (config?.integrations?.aws?.enabled && config?.media?.recording?.uploadToS3) || false,
+            recSyncServerToS3: (config?.integrations?.s3?.enabled && config?.media?.recording?.uploadToS3) || false,
             recSyncServerRecording: config?.media?.recording?.enabled || false,
             recSyncServerEndpoint: config?.media?.recording?.endpoint || '',
         };
         // ##########################
+
+        this.notifications = {
+            mode: {
+                email: '',
+            },
+            events: {
+                join: false,
+            },
+        };
+
         this._moderator = {
             video_start_privacy: false,
             audio_start_muted: false,
@@ -149,9 +159,9 @@ module.exports = class Room {
         return this.rtmpFileStreamer;
     }
 
-    async getRTMP(dir = 'rtmp') {
+    async getRTMP(dir = '../rtmp') {
         //
-        const folderPath = path.join(__dirname, '../', dir);
+        const folderPath = path.join(__dirname, dir);
         log.debug('[getRTMP] Files from dir', folderPath);
 
         try {
@@ -161,7 +171,7 @@ module.exports = class Room {
                 fs.mkdirSync(folderPath, { recursive: true });
             }
             const files = fs.readdirSync(folderPath);
-            log.info('[getRTMP] Files', files);
+            log.debug('[getRTMP] Files', files);
             return files;
         } catch (error) {
             log.error(`[getRTMP] Error reading directory: ${error.message}`);
@@ -319,19 +329,19 @@ module.exports = class Room {
             .then((router) => {
                 this.router = router;
                 if (this.audioLevelObserverEnabled) {
-                    log.info('Audio Level Observer enabled, starting observation...');
+                    log.debug('Audio Level Observer enabled, starting observation...');
                     this.startAudioLevelObservation().catch((err) => {
                         log.error('Failed to start audio level observation', err);
                     });
                 }
                 if (this.activeSpeakerObserverEnabled) {
-                    log.info('Active Speaker Observer enabled, starting observation...');
+                    log.debug('Active Speaker Observer enabled, starting observation...');
                     this.startActiveSpeakerObserver().catch((err) => {
                         log.error('Failed to start active speaker observer', err);
                     });
                 }
                 this.router.observer.on('close', () => {
-                    log.info('---------------> Router is now closed as the last peer has left the room', {
+                    log.debug('---------------> Router is now closed as the last peer has left the room', {
                         room: this.id,
                     });
                 });
@@ -349,9 +359,11 @@ module.exports = class Room {
         }
     }
 
-    close() {
+    async close() {
         this.closeAudioLevelObserver();
         this.closeActiveSpeakerObserver();
+        if (this.isRtmpFileStreamerActive()) this.stopRTMP();
+        if (this.isRtmpUrlStreamerActive()) this.stopRTMPfromURL();
         this.closeRouter();
         log.debug('Room closed', { room_id: this.id });
     }
@@ -415,7 +427,7 @@ module.exports = class Room {
     addProducerToAudioLevelObserver(producer) {
         if (this.audioLevelObserverEnabled) {
             this.audioLevelObserver.addProducer(producer);
-            log.info('Producer added to audio level observer', { producer });
+            log.debug('Producer added to audio level observer', { producer });
         }
     }
 
@@ -473,7 +485,7 @@ module.exports = class Room {
     addProducerToActiveSpeakerObserver(producer) {
         if (this.activeSpeakerObserverEnabled) {
             this.activeSpeakerObserver.addProducer(producer);
-            log.info('Producer added to active speaker observer', { producer });
+            log.debug('Producer added to active speaker observer', { producer });
         }
     }
 
@@ -483,6 +495,20 @@ module.exports = class Room {
             this.activeSpeakerObserver = null;
             log.debug('Active Speaker Observer closed');
         }
+    }
+
+    // ####################################################
+    // ROOM NOTIFICATIONS
+    // ####################################################
+
+    updateRoomNotifications(data) {
+        log.debug('Update room notifications', data);
+        this.notifications = data.notifications;
+    }
+
+    getRoomNotifications() {
+        log.debug('get room notifications', this.notifications);
+        return this.notifications;
     }
 
     // ####################################################
@@ -685,24 +711,25 @@ module.exports = class Room {
         });
 
         transport.on('icestatechange', (iceState) => {
-            log.debug('ICE state changed', {
+            const iceLog = {
                 peer_name: peer_name,
                 transport_id: id,
                 iceState: iceState,
-            });
+            };
+            log.debug('ICE state changed', iceLog);
 
             if (iceState === 'disconnected') {
-                log.warn(`ICE state disconnected for transport ${transport.id}, waiting before closing`);
+                log.debug('ICE state disconnected for transport waiting before closing', iceLog);
                 setTimeout(() => {
                     if (transport.iceState === 'disconnected') {
-                        log.warn(`Closing transport ${transport.id} due to prolonged ICE disconnection`);
+                        log.warn('Closing transport due to prolonged ICE disconnection', iceLog);
                         if (!transport.closed) {
                             transport.close();
                         }
                     }
                 }, iceConsentTimeout * 1000); // Wait iceConsentTimeout seconds before closing
             } else if (iceState === 'closed') {
-                log.warn(`ICE state closed for transport ${transport.id}`);
+                log.warn('ICE state closed, closing transport', iceLog);
                 if (!transport.closed) {
                     transport.close();
                 }

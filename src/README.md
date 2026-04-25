@@ -16,7 +16,7 @@ This project is proudly sponsored by
 
 <h1 align=center>Recall.ai - API for meeting recording</h1>
 <p align="center">
-    <a href="https://recall.ai/?utm_source=mirotalksfu&utm_medium=sponsorship"><strong>Recall.ai</strong></a> – an API for recording Zoom, Google Meet, Microsoft Teams, and in-person meetings.
+    <a href="https://www.recall.ai/?utm_source=github&utm_medium=sponsorship&utm_campaign=miroslavpejic85-mirotalksfu"><strong>Recall.ai</strong></a> – an API for recording Zoom, Google Meet, Microsoft Teams, and in-person meetings.
 </p>
 
 <hr />
@@ -141,36 +141,20 @@ This project is proudly sponsored by
 
 <br/>
 
-When [host.protected](https://docs.mirotalk.com/mirotalk-sfu/host-protection/) or `host.user_auth` is enabled, the host/users can provide a valid token for direct joining the room as specified in the `app/src/config.js` file.
+When [`HOST_PROTECTED`](https://docs.mirotalk.com/mirotalk-sfu/host-protection/) or `HOST_USER_AUTH` is enabled, hosts and users must provide a valid token to join a room directly. Token requirements and configuration details are specified in the `app/src/config.js` file.
 
-| Params           | Value                                                                            | Description                                                                            |
-| ---------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `host.protected` | `true` if protection is enabled, `false` if not (default false)                  | Requires the host to provide a valid username and password during room initialization. |
-| `host.user_auth` | `true` if user authentication is required, `false` if not (default false).       | Determines whether host authentication is required.                                    |
-| `host.users`     | JSON array with user objects: `{"username": "username", "password": "password"}` | List of valid host users with their credentials.                                       |
+In the configuration file `.env`, you can enable security measures for your video conferencing room using the following parameters:
 
-Example:
+- `HOST_PROTECTED`: Set to `true` to require the host to provide a valid username and password during room initialization. Default is `false`.
+- `HOST_USER_AUTH`: Set to `true` to enable user authentication for hosts. Default is `false`.
+- `HOST_USERS`: Define host users in the format: username:password:displayName:allowedRooms (room1,room2...)
 
-```js
-    host: {
-        protected: true,
-        user_auth: true,
-        users: [
-            {
-                username: 'username',
-                password: 'password',
-                displayname: 'displayname',
-                allowed_rooms: ['*'],
-            },
-            {
-                username: 'username2',
-                password: 'password2',
-                displayname: 'displayname2',
-                allowed_rooms: ['room1', 'room2'],
-            },
-            //...
-        ],
-    },
+Example Configuration:
+
+```bash
+HOST_PROTECTED=true
+HOST_USER_AUTH=false
+HOST_USERS="user1:pass1:user-1:*|user2@mail.com:pass2:user-2:*|user3:pass3:user-3:room1,room2"
 ```
 
 </details>
@@ -180,7 +164,7 @@ Example:
 
 <br/>
 
-- Before running MiroTalk SFU, ensure you have `Node.js` and all [requirements](https://mediasoup.org/documentation/v3/mediasoup/installation/#requirements) installed. This project has been tested with Node version [18.X](https://nodejs.org/en/download).
+- Before running MiroTalk SFU, ensure you have `Node.js` and all [requirements](https://mediasoup.org/documentation/v3/mediasoup/installation/#requirements) installed. This project has been tested with Node version [22.X](https://nodejs.org/en/download).
 
 - Requirements install example for `Ubuntu 24.04 LTS`
 
@@ -202,7 +186,7 @@ $ apt install -y ffmpeg
 
 ![nodejs](public/images/nodejs.png)
 
-Install `NodeJS 18.X` and `npm` using [Node Version Manager](https://docs.mirotalk.com/nvm/nvm/)
+Install `NodeJS 22.X` and `npm` using [Node Version Manager](https://docs.mirotalk.com/nvm/nvm/)
 
 ---
 
@@ -265,6 +249,48 @@ $ docker-compose down
 ```
 
 - Open [https://localhost:3010](https://localhost:3010) in your browser.
+
+</details>
+
+<details open>
+<summary>Self-Hosting</summary>
+
+</br>
+
+![setup](/public/images/self-hosting.png)
+
+## **Requirements**
+
+- A `clean server` running **Ubuntu 22.04 or 24.04 LTS**
+- **Root access** to the Server
+- A **domain or subdomain** pointing to your server’s public IPv4
+
+---
+
+## Note
+
+When **prompted**, simply **enter your domain or subdomain**. Then wait for the installation to complete.
+
+```bash
+# Install MiroTalk SFU
+wget -qO sfu-install.sh https://docs.mirotalk.com/scripts/sfu/sfu-install.sh \
+  && chmod +x sfu-install.sh \
+  && ./sfu-install.sh
+```
+
+```bash
+# Uninstall MiroTalk SFU
+wget -qO sfu-uninstall.sh https://docs.mirotalk.com/scripts/sfu/sfu-uninstall.sh \
+  && chmod +x sfu-uninstall.sh \
+  && ./sfu-uninstall.sh
+```
+
+```bash
+# Update MiroTalk SFU
+wget -qO sfu-update.sh https://docs.mirotalk.com/scripts/sfu/sfu-update.sh \
+  && chmod +x sfu-update.sh \
+  && ./sfu-update.sh
+```
 
 </details>
 
@@ -415,11 +441,17 @@ curl -X POST "https://sfu.mirotalk.com/api/v1/token" \
 </details>
 
 <details open>
-<summary>Hetzner, Netcup, Hostinger & Contabo</summary>
+<summary>Cloudron, Hetzner, Netcup, Hostinger & Contabo</summary>
 
 <br/>
 
-[![Hetzner](public/sponsors/Hetzner.png)](https://hetzner.cloud/?ref=XdRifCzCK3bn)
+[![Cloudron](public/sponsors/CloudronLogo.png)](https://www.cloudron.io/)
+
+MiroTalk integrates with [Cloudron](https://www.cloudron.io/), enabling easy, secure, and self-managed video conferencing for organizations. Cloudron automates deployment, updates, backups, and user management, letting teams focus on collaboration instead of server maintenance. Install MiroTalk in one click from the [Cloudron App Store](https://www.cloudron.io/store/index.html) and enjoy a reliable, enterprise-ready solution.
+
+---
+
+[![Hetzner](public/sponsors/Hetzner.png)](https://www.hetzner.com)
 
 This application is running for `demonstration purposes` on [Hetzner](https://www.hetzner.com/), one of `the best` [cloud providers](https://www.hetzner.com/cloud) and [dedicated root servers](https://www.hetzner.com/dedicated-rootserver).
 
@@ -512,12 +544,12 @@ To obtain a [MiroTalk SFU license](https://docs.mirotalk.com/license/licensing-o
 
 Do you find MiroTalk SFU indispensable for your needs? Join us in supporting this transformative project by [becoming a backer or sponsor](https://github.com/sponsors/miroslavpejic85). By doing so, not only will your logo prominently feature here, but you'll also drive the growth and sustainability of MiroTalk SFU. Your support is vital in ensuring that this valuable platform continues to thrive and remain accessible for all. Make an impact – back MiroTalk SFU today and be part of this exciting journey!
 
-|                                                                                   |                                                                                                                           |                                                                                |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| [![EffectsSDK](public/sponsors/EffectsSDK.png)](https://effectssdk.ai/)           | [![Hetzner](public/sponsors/HetznerLogo.png)](https://hetzner.cloud/?ref=XdRifCzCK3bn)                                    | [![Netcup](public/sponsors/Netcup.png)](https://www.netcup.com/en/?ref=309627) |
-| [![BroadcastX](public/sponsors/BroadcastX.png)](https://broadcastx.de/)           | [![LuvLounge](public/sponsors/LuvLounge.png)](https://luvlounge.ca)                                                       | [![QuestionPro](public/sponsors/QuestionPro.png)](https://www.questionpro.com) |
-| [![BrowserStack](public/sponsors/BrowserStack.png)](https://www.browserstack.com) | [![CrystalSound](public/sponsors/CrystalSound.png)](https://crystalsound.ai)                                              | [![Cloudron](public/sponsors/Cloudron.png)](https://cloudron.io)               |
-| [![Kiquix](public/sponsors/KiquixLogo.png)](https://kiquix.com)                   | [![LambdaTest](public/sponsors/LambdaTest.png)](https://lambdatest.com/pricing?coupon=QURFODlQUk9NT1RFUg==&refid=1149848) |                                                                                |
+|                                                                                   |                                                                                        |                                                                                |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [![EffectsSDK](public/sponsors/EffectsSDK.png)](https://effectssdk.ai/)           | [![Hetzner](public/sponsors/HetznerLogo.png)](https://hetzner.cloud/?ref=XdRifCzCK3bn) | [![Netcup](public/sponsors/Netcup.png)](https://www.netcup.com/en/?ref=309627) |
+| [![BroadcastX](public/sponsors/BroadcastX.png)](https://broadcastx.de/)           | [![LuvLounge](public/sponsors/LuvLounge.png)](https://luvlounge.ca)                    | [![QuestionPro](public/sponsors/QuestionPro.png)](https://www.questionpro.com) |
+| [![BrowserStack](public/sponsors/BrowserStack.png)](https://www.browserstack.com) | [![CrystalSound](public/sponsors/CrystalSound.png)](https://crystalsound.ai)           | [![Cloudron](public/sponsors/Cloudron.png)](https://cloudron.io)               |
+| [![Kiquix](public/sponsors/KiquixLogo.png)](https://kiquix.com)                   | [![TestMuAI](public/sponsors/TestMuAIBlack.svg)](https://www.testmu.ai/)               |                                                                                |
 |                                                                                   |
 
 </details>
@@ -594,3 +626,9 @@ This project is tested with [BrowserStack](https://www.browserstack.com).
 ---
 
 ![Star History Chart](https://app.repohistory.com/api/svg?repo=miroslavpejic85/mirotalksfu&type=Date&background=0D1117&color=62C3F8)
+
+---
+
+<p align="center">
+  Built with ❤️ by <a href="https://www.linkedin.com/in/miroslav-pejic-976a07101/">Miroslav</a> and the open-source community
+</p>

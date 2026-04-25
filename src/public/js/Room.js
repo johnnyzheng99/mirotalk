@@ -11,7 +11,7 @@ if (location.href.substr(0, 5) !== 'https') location.href = 'https' + location.h
  * @license For commercial or closed source, contact us at license.mirotalk@gmail.com or purchase directly via CodeCanyon
  * @license CodeCanyon: https://codecanyon.net/item/mirotalk-sfu-webrtc-realtime-video-conferences/40769970
  * @author  Miroslav Pejic - miroslav.pejic.85@gmail.com
- * @version 1.9.76
+ * @version 2.0.94
  *
  */
 
@@ -65,7 +65,6 @@ let redirect = {
 };
 
 let recCodecs = null;
-let isToggleExtraBtnClicked = false;
 
 const _PEER = {
     presenter: '<i class="fa-solid fa-user-shield"></i>',
@@ -96,8 +95,9 @@ const Base64Prefix = 'data:application/pdf;base64,';
 // Whiteboard
 const wbImageInput = 'image/*';
 const wbPdfInput = 'application/pdf';
-const wbWidth = 1366;
-const wbHeight = 768;
+// Reference dimensions for whiteboard (16:9 aspect ratio)
+const wbReferenceWidth = 1920;
+const wbReferenceHeight = 1080;
 const wbGridSize = 20;
 const wbStroke = '#cccccc63';
 let wbGridLines = [];
@@ -195,6 +195,7 @@ const pickr = Pickr.create({
 // ENUMERATE DEVICES SELECTS
 // ####################################################
 
+const participantsCountBadge = getId('participantsCountBadge');
 const videoSelect = getId('videoSelect');
 const videoQuality = getId('videoQuality');
 const videoFps = getId('videoFps');
@@ -205,6 +206,23 @@ const microphoneSelect = getId('microphoneSelect');
 const initMicrophoneSelect = getId('initMicrophoneSelect');
 const speakerSelect = getId('speakerSelect');
 const initSpeakerSelect = getId('initSpeakerSelect');
+
+const startVideoBtn = getId('startVideoButton');
+const startAudioBtn = getId('startAudioButton');
+const stopVideoBtn = getId('stopVideoButton');
+const stopAudioBtn = getId('stopAudioButton');
+const videoDropdown = getId('startVideoDeviceDropdown');
+const audioDropdown = getId('startAudioDeviceDropdown');
+const videoToggle = getId('startVideoDeviceMenuButton');
+const audioToggle = getId('startAudioDeviceMenuButton');
+const videoMenu = getId('startVideoDeviceMenu');
+const audioMenu = getId('startAudioDeviceMenu');
+
+const settingsSplit = getId('settingsSplit');
+const settingsExtraDropdown = getId('settingsExtraDropdown');
+const settingsExtraToggle = getId('settingsExtraToggle');
+const settingsExtraMenu = getId('settingsExtraMenu');
+const noExtraButtons = getId('noExtraButtons');
 
 // ####################################################
 // VIRTUAL BACKGROUND DEFAULT IMAGES AND INIT CLASS
@@ -283,15 +301,20 @@ let camera = 'user';
 
 let recTimer = null;
 let recElapsedTime = null;
+let recShowInfo = true;
 
 let wbCanvas = null;
 let wbIsLock = false;
 let wbIsDrawing = false;
 let wbIsOpen = false;
 let wbIsRedoing = false;
+let wbIsObject = false;
 let wbIsEraser = false;
+let wbIsPencil = false;
+let wbIsVanishing = false;
 let wbIsBgTransparent = false;
 let wbPop = [];
+let wbVanishingObjects = [];
 let coords = {};
 
 let isButtonsVisible = false;
@@ -323,8 +346,27 @@ let quill = null;
 // ####################################################
 
 document.addEventListener('DOMContentLoaded', function () {
-    initClient();
+    initCursorLightEffect();
+    socket.once('connect', () => {
+        initClient();
+    });
 });
+
+// ####################################################
+// MOUSE CURSOR LIGHT EFFECT
+// ####################################################
+
+function initCursorLightEffect() {
+    if (!videoMediaContainer || !isDesktopDevice) return;
+    videoMediaContainer.classList.add('mouse-light');
+    videoMediaContainer.addEventListener('mousemove', function (e) {
+        const rect = videoMediaContainer.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 100;
+        const y = ((e.clientY - rect.top) / rect.height) * 100;
+        videoMediaContainer.style.setProperty('--mouse-x', x + '%');
+        videoMediaContainer.style.setProperty('--mouse-y', y + '%');
+    });
+}
 
 function initClient() {
     setTheme();
@@ -374,6 +416,7 @@ function initClient() {
         setTippy('switchSounds', 'Toggle the sounds notifications', 'right');
         setTippy('switchShare', "Show 'Share Room' popup on join", 'right');
         setTippy('switchKeepButtonsVisible', 'Keep buttons always visible', 'right');
+        setTippy('switchKeepAwake', 'Prevent the device from sleeping (if supported)', 'right');
         setTippy('roomId', 'Room name (click to copy)', 'right');
         setTippy('sessionTime', 'Session time', 'right');
         setTippy('recordingImage', 'Toggle recording', 'right');
@@ -389,12 +432,14 @@ function initClient() {
         setTippy('wbBackgroundColorEl', 'Background color', 'bottom');
         setTippy('wbDrawingColorEl', 'Drawing color', 'bottom');
         setTippy('whiteboardPencilBtn', 'Drawing mode', 'bottom');
+        setTippy('whiteboardVanishingBtn', 'Vanishing pen (disappears in 5s)', 'bottom');
+        setTippy('whiteboardEraserBtn', 'Eraser', 'bottom');
         setTippy('whiteboardObjectBtn', 'Object mode', 'bottom');
         setTippy('whiteboardUndoBtn', 'Undo', 'bottom');
         setTippy('whiteboardRedoBtn', 'Redo', 'bottom');
         setTippy('whiteboardLockBtn', 'Toggle Lock whiteboard', 'right');
         setTippy('whiteboardUnlockBtn', 'Toggle Lock whiteboard', 'right');
-        setTippy('whiteboardCloseBtn', 'Close', 'right');
+        setTippy('whiteboardCloseBtn', 'Close', 'bottom');
         setTippy('chatCleanTextButton', 'Clean', 'top');
         setTippy('chatPasteButton', 'Paste', 'top');
         setTippy('chatSendButton', 'Send', 'top');
@@ -403,11 +448,12 @@ function initClient() {
         setTippy('chatSpeechStartButton', 'Start speech recognition', 'top');
         setTippy('chatSpeechStopButton', 'Stop speech recognition', 'top');
         setTippy('chatEmojiButton', 'Emoji', 'top');
+        setTippy('chatShowParticipantsListBtn', 'Toggle participants list', 'top');
         setTippy('chatMarkdownButton', 'Markdown', 'top');
+        setTippy('fileShareChatButton', 'Share the file', 'top');
         setTippy('chatCloseButton', 'Close', 'bottom');
         setTippy('chatTogglePin', 'Toggle pin', 'bottom');
         setTippy('chatHideParticipantsList', 'Hide', 'bottom');
-        setTippy('chatShowParticipantsList', 'Toggle participants list', 'bottom');
         setTippy('chatMaxButton', 'Maximize', 'bottom');
         setTippy('chatMinButton', 'Minimize', 'bottom');
         setTippy('pollTogglePin', 'Toggle pin', 'bottom');
@@ -451,27 +497,9 @@ function refreshMainButtonsToolTipPlacement() {
     if (!isMobileDevice) {
         //
         const position = BtnsBarPosition.options[BtnsBarPosition.selectedIndex].value;
-        const placement = position == 'vertical' ? 'right' : 'top';
         const bPlacement = position == 'vertical' ? 'top' : 'right';
 
-        // Control buttons
-        setTippy('shareButton', 'Share room', placement);
-        setTippy('hideMeButton', 'Toggle hide self view', placement);
-        setTippy('startRecButton', 'Start recording', placement);
-        setTippy('stopRecButton', 'Stop recording', placement);
-        setTippy('fullScreenButton', 'Toggle full screen', placement);
-        setTippy('emojiRoomButton', 'Toggle emoji reaction', placement);
-        setTippy('pollButton', 'Toggle the poll', placement);
-        setTippy('editorButton', 'Toggle the editor', placement);
-        setTippy('transcriptionButton', 'Toggle transcription', placement);
-        setTippy('whiteboardButton', 'Toggle the whiteboard', placement);
-        setTippy('documentPiPButton', 'Toggle Document picture in picture', placement);
-        setTippy('snapshotRoomButton', 'Snapshot screen, window, or tab', placement);
-        setTippy('restartICEButton', 'Restart ICE', placement);
-        setTippy('aboutButton', 'About this project', placement);
-
         // Bottom buttons
-        setTippy('toggleExtraButton', 'Toggle extra buttons', bPlacement);
         setTippy('startAudioButton', 'Start the audio', bPlacement);
         setTippy('stopAudioButton', 'Stop the audio', bPlacement);
         setTippy('startVideoButton', 'Start the video', bPlacement);
@@ -482,6 +510,7 @@ function refreshMainButtonsToolTipPlacement() {
         setTippy('raiseHandButton', 'Raise your hand', bPlacement);
         setTippy('lowerHandButton', 'Lower your hand', bPlacement);
         setTippy('chatButton', 'Toggle the chat', bPlacement);
+        setTippy('participantsButton', 'Toggle participants list', bPlacement);
         setTippy('settingsButton', 'Toggle the settings', bPlacement);
         setTippy('exitButton', 'Leave room', bPlacement);
     }
@@ -527,7 +556,7 @@ function getQueryParam(param) {
 function getRoomId() {
     let queryRoomId = getQueryParam('room');
     let roomId = queryRoomId ? queryRoomId : location.pathname.substring(6);
-    if (roomId == '') {
+    if (roomId == '' || roomId === 'random') {
         roomId = makeId(12);
     }
     console.log('Direct join', { room: roomId });
@@ -754,6 +783,9 @@ function setupInitButtons() {
         getId('usernameInput').value = '';
         toggleUsernameEmoji();
     };
+    initExitButton.onclick = () => {
+        initLeaveMeeting();
+    };
 }
 
 // ####################################################
@@ -920,7 +952,27 @@ function getPeerName() {
         return 'Invalid name';
     }
     console.log('Direct join', { name: name });
+
+    if (isValidEmail(name)) {
+        getId('notifyEmailInput').value = name;
+    }
+
+    if (name === 'random') {
+        const randomName = generateRandomName();
+        console.log('Direct join', { name: randomName });
+        return randomName;
+    }
+
     return name;
+}
+
+function generateRandomName() {
+    const adjectives = ['Quick', 'Lazy', 'Happy', 'Sad', 'Brave', 'Clever', 'Witty', 'Calm', 'Bright', 'Charming'];
+    const nouns = ['Fox', 'Dog', 'Cat', 'Mouse', 'Lion', 'Tiger', 'Bear', 'Wolf', 'Eagle', 'Shark'];
+    const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const number = Math.floor(Math.random() * 1000);
+    return `${adjective}${noun}${number}`;
 }
 
 function getPeerAvatar() {
@@ -1223,16 +1275,14 @@ async function whoAreYou() {
         console.error('AXIOS OIDC Error fetching profile', error.message || error);
     }
 
-    initUser.classList.toggle('hidden');
-
     Swal.fire({
         allowOutsideClick: false,
         allowEscapeKey: false,
         //background: swalBackground,
         background:"url(../images/background6.webp) no-repeat top / cover",
+        //title: BRAND.app?.name,
         imageUrl: BRAND.site?.watermark,
         position: 'center-start',
-        //title: room_id,
         input: 'text',
         inputPlaceholder: 'Enter your email or name',
         inputAttributes: { maxlength: 254, id: 'usernameInput' },
@@ -1261,6 +1311,10 @@ async function whoAreYou() {
             }
             setCookie(room_id + '_name', name, 30);
             peer_name = name;
+
+            if (isValidEmail(peer_name)) {
+                getId('notifyEmailInput').value = peer_name;
+            }
         },
     }).then(async () => {
         if (!usernameEmoji.classList.contains('hidden')) {
@@ -1274,6 +1328,9 @@ async function whoAreYou() {
         getPeerInfo();
         joinRoom(peer_name, room_id);
     });
+
+    // Show the init user container injected in Swal
+    initUser.classList.toggle('hidden');
 
     if (force_peer_name) {
         getId('usernameInput').disabled = true;
@@ -1599,16 +1656,6 @@ function roomIsReady() {
         myProfileAvatar.setAttribute('src', rc.genAvatarSvg(peer_name, 64));
     }
 
-    const controlDiv = getId('control');
-    if (controlDiv) {
-        const visibleButtons = Array.from(controlDiv.children).filter(
-            (el) => el.offsetParent !== null && !el.classList.contains('hidden')
-        );
-        BUTTONS.main.extraButton || visibleButtons.length > 0 ? show(toggleExtraButton) : hide(toggleExtraButton);
-    } else {
-        show(toggleExtraButton);
-    }
-
     BUTTONS.main.exitButton && show(exitButton);
     BUTTONS.main.shareButton && show(shareButton);
     BUTTONS.main.hideMeButton && show(hideMeButton);
@@ -1619,13 +1666,17 @@ function roomIsReady() {
         hide(tabRecordingBtn);
     }
     BUTTONS.main.chatButton && show(chatButton);
+    BUTTONS.main.participantsButton && show(participantsButton);
     BUTTONS.main.pollButton && show(pollButton);
     BUTTONS.main.editorButton && show(editorButton);
     BUTTONS.main.raiseHandButton && show(raiseHandButton);
     BUTTONS.main.emojiRoomButton && show(emojiRoomButton);
+    show(fileShareExtraButton);
     !BUTTONS.chat.chatSaveButton && hide(chatSaveButton);
     BUTTONS.chat.chatEmojiButton && show(chatEmojiButton);
+    show(chatShowParticipantsListBtn);
     BUTTONS.chat.chatMarkdownButton && show(chatMarkdownButton);
+    show(fileShareChatButton);
 
     !BUTTONS.poll.pollSaveButton && hide(pollSaveButton);
 
@@ -1645,8 +1696,6 @@ function roomIsReady() {
     }
     if (isMobileDevice) {
         hide(initVideoAudioRefreshButton);
-        hide(refreshVideoDevices);
-        hide(refreshAudioDevices);
         BUTTONS.main.swapCameraButton && show(swapCameraButton);
         rc.chatMaximize();
         hide(chatTogglePin);
@@ -1712,6 +1761,7 @@ function roomIsReady() {
     BUTTONS.settings.lobbyButton && show(lobbyButton);
     BUTTONS.settings.sendEmailInvitation && show(sendEmailInvitation);
     !BUTTONS.settings.customNoiseSuppression && hide(noiseSuppressionButton);
+    BUTTONS.settings.tabNotificationsBtn && show(tabNotificationsBtn);
     if (rc.recording.recSyncServerRecording) show(roomRecordingServer);
     BUTTONS.main.aboutButton && show(aboutButton);
     if (!isMobileDevice) show(pinUnpinGridDiv);
@@ -1731,6 +1781,9 @@ function roomIsReady() {
     loadSettingsFromLocalStorage();
     startSessionTimer();
     handleButtonsBar();
+    handleDropdownHover();
+    setupSettingsExtraDropdown();
+    setupQuickDeviceSwitchDropdowns();
     checkButtonsBar();
     if (room_password) {
         lockRoomButton.click();
@@ -1742,8 +1795,21 @@ function roomIsReady() {
 // UTILS
 // ####################################################
 
+function updateChatEmptyNotice() {
+    const chatLists = [
+        getId('chatGPTMessages'),
+        getId('deepSeekMessages'),
+        getId('chatPublicMessages'),
+        getId('chatPrivateMessages'),
+    ].filter(Boolean);
+    const emptyNotice = getId('chatEmptyNotice');
+    if (!emptyNotice) return;
+    const hasMessages = chatLists.some((ul) => ul.children.length > 0);
+    hasMessages ? emptyNotice.classList.add('hidden') : emptyNotice.classList.remove('hidden');
+}
+
 function elemDisplay(elem, display, mode = 'block') {
-    elem = getId(elem);
+    elem = typeof elem === 'string' ? getId(elem) : elem;
     if (!elem) {
         elementNotFound(elem);
         return;
@@ -1808,9 +1874,13 @@ function elementNotFound(element) {
 function startSessionTimer() {
     sessionTime.style.display = 'inline';
     let callStartTime = Date.now();
+    let callElapsedSecondsTime = 0;
     setInterval(function printTime() {
+        callElapsedSecondsTime++;
         let callElapsedTime = Date.now() - callStartTime;
         sessionTime.innerText = getTimeToString(callElapsedTime);
+        const myCurrentSessionTime = document.querySelector('.current-session-time.notranslate');
+        if (myCurrentSessionTime) myCurrentSessionTime.innerText = secondsToHms(callElapsedSecondsTime);
     }, 1000);
 }
 
@@ -1825,6 +1895,17 @@ function getTimeToString(time) {
     let formattedMM = mm.toString().padStart(2, '0');
     let formattedSS = ss.toString().padStart(2, '0');
     return `${formattedHH}:${formattedMM}:${formattedSS}`;
+}
+
+function secondsToHms(d) {
+    d = Number(d);
+    const h = Math.floor(d / 3600);
+    const m = Math.floor((d % 3600) / 60);
+    const s = Math.floor((d % 3600) % 60);
+    const hDisplay = h > 0 ? h + 'h' : '';
+    const mDisplay = m > 0 ? m + 'm' : '';
+    const sDisplay = s > 0 ? s + 's' : '';
+    return hDisplay + ' ' + mDisplay + ' ' + sDisplay;
 }
 
 // ####################################################
@@ -1853,6 +1934,7 @@ function startRecordingTimer() {
 }
 function stopRecordingTimer() {
     clearInterval(recTimer);
+    recordingStatus.innerText = '0s';
 }
 
 // ####################################################
@@ -1873,12 +1955,6 @@ function handleButtons() {
                 break;
         }
     });
-    control.onmouseover = () => {
-        isButtonsBarOver = true;
-    };
-    control.onmouseout = () => {
-        isButtonsBarOver = false;
-    };
     bottomButtons.onmouseover = () => {
         isButtonsBarOver = true;
     };
@@ -1939,6 +2015,9 @@ function handleButtons() {
     tabAspectBtn.onclick = (e) => {
         rc.openTab(e, 'tabAspect');
     };
+    tabNotificationsBtn.onclick = (e) => {
+        rc.openTab(e, 'tabNotifications');
+    };
     tabModeratorBtn.onclick = (e) => {
         rc.openTab(e, 'tabModerator');
     };
@@ -1953,6 +2032,13 @@ function handleButtons() {
     };
     tabLanguagesBtn.onclick = (e) => {
         rc.openTab(e, 'tabLanguages');
+    };
+    notifyEmailCleanBtn.onclick = () => {
+        rc.cleanNotifications();
+        rc.saveNotifications(false);
+    };
+    saveNotificationsBtn.onclick = () => {
+        rc.saveNotifications();
     };
     tabVideoAIBtn.onclick = (e) => {
         rc.openTab(e, 'tabVideoAI');
@@ -1972,16 +2058,8 @@ function handleButtons() {
     avatarQuality.onchange = (e) => {
         VideoAI.quality = e.target.value;
     };
-    refreshVideoDevices.onclick = async () => {
-        await refreshMyVideoDevices();
-        userLog('info', 'Refreshed video devices', 'top-end');
-    };
-    refreshAudioDevices.onclick = async () => {
-        await refreshMyAudioDevices();
-        userLog('info', 'Refreshed audio devices', 'top-end');
-    };
     speakerTestBtn.onclick = () => {
-        sound('ring', true);
+        playSpeaker(speakerSelect?.value, 'ring');
     };
     roomId.onclick = () => {
         isMobileDevice ? shareRoom(true) : copyRoomURL();
@@ -1991,9 +2069,9 @@ function handleButtons() {
     };
     chatButton.onclick = () => {
         rc.toggleChat();
-        if (isMobileDevice) {
-            rc.toggleShowParticipants();
-        }
+    };
+    participantsButton.onclick = async () => {
+        rc.toggleParticipants();
     };
     // Polls
     pollButton.onclick = () => {
@@ -2089,7 +2167,7 @@ function handleButtons() {
     chatHideParticipantsList.onclick = (e) => {
         rc.toggleShowParticipants();
     };
-    chatShowParticipantsList.onclick = (e) => {
+    chatShowParticipantsListBtn.onclick = (e) => {
         rc.toggleShowParticipants();
     };
     chatShareRoomBtn.onclick = (e) => {
@@ -2172,21 +2250,6 @@ function handleButtons() {
     };
     lowerHandButton.onclick = () => {
         rc.updatePeerInfo(peer_name, socket.id, 'hand', false);
-    };
-    toggleExtraButton.onclick = () => {
-        toggleExtraButtons();
-        if (!isMobileDevice) {
-            isToggleExtraBtnClicked = true;
-            setTimeout(() => {
-                isToggleExtraBtnClicked = false;
-            }, 2000);
-        }
-    };
-    toggleExtraButton.onmouseover = () => {
-        if (isToggleExtraBtnClicked || isMobileDevice) return;
-        if (control.style.display === 'none') {
-            toggleExtraButtons();
-        }
     };
     startAudioButton.onclick = async () => {
         const moderator = rc.getModerator();
@@ -2272,6 +2335,12 @@ function handleButtons() {
     fileShareButton.onclick = () => {
         rc.selectFileToShare(socket.id, true);
     };
+    fileShareExtraButton.onclick = () => {
+        fileShareButton.click();
+    };
+    fileShareChatButton.onclick = () => {
+        rc.chatPeerId === 'all' ? fileShareButton.click() : rc.selectFileToShare(rc.chatPeerId, false);
+    };
     videoShareButton.onclick = () => {
         rc.shareVideo('all');
     };
@@ -2300,10 +2369,16 @@ function handleButtons() {
         rc.snapshotRoom();
     };
     whiteboardPencilBtn.onclick = () => {
-        whiteboardIsDrawingMode(true);
+        whiteboardResetAllMode();
+        whiteboardIsPencilMode(true);
+    };
+    whiteboardVanishingBtn.onclick = () => {
+        whiteboardResetAllMode();
+        whiteboardIsVanishingMode(true);
     };
     whiteboardObjectBtn.onclick = () => {
-        whiteboardIsDrawingMode(false);
+        whiteboardResetAllMode();
+        whiteboardIsObjectMode(true);
     };
     whiteboardUndoBtn.onclick = () => {
         whiteboardAction(getWhiteboardAction('undo'));
@@ -2326,6 +2401,9 @@ function handleButtons() {
     whiteboardTextBtn.onclick = () => {
         whiteboardAddObj('text');
     };
+    whiteboardStickyNoteBtn.onclick = () => {
+        whiteboardAddObj('stickyNote');
+    };
     whiteboardLineBtn.onclick = () => {
         whiteboardAddObj('line');
     };
@@ -2339,10 +2417,14 @@ function handleButtons() {
         whiteboardAddObj('circle');
     };
     whiteboardEraserBtn.onclick = () => {
-        whiteboardIsEraser(true);
+        whiteboardResetAllMode();
+        whiteboardIsEraserMode(true);
     };
     whiteboardCleanBtn.onclick = () => {
         confirmClearBoard();
+    };
+    whiteboardShortcutsBtn.onclick = () => {
+        showWhiteboardShortcuts();
     };
     whiteboardCloseBtn.onclick = () => {
         whiteboardAction(getWhiteboardAction('close'));
@@ -2393,6 +2475,7 @@ function setButtonsInit() {
         setTippy('initVideoMirrorButton', 'Toggle video mirror', 'top');
         setTippy('initVirtualBackgroundButton', 'Set Virtual Background or Blur', 'top');
         setTippy('initUsernameEmojiButton', 'Toggle username emoji', 'top');
+        setTippy('initExitButton', 'Leave meeting', 'top');
     }
     if (!isAudioAllowed) hide(initAudioButton);
     if (!isVideoAllowed) hide(initVideoButton);
@@ -2580,6 +2663,11 @@ function handleMediaError(mediaType, err, redirectURL = false) {
             break;
     }
 
+    if (mediaType === 'screenType' && err.name === 'NotAllowedError') {
+        console.warn('User cancelled the screen sharing prompt');
+        return;
+    }
+
     let html = `
     <ul style="text-align: left">
         <li>Media type: ${mediaType}</li>
@@ -2599,9 +2687,11 @@ function handleMediaError(mediaType, err, redirectURL = false) {
 
     popupHtmlMessage(null, image.forbidden, 'Access denied', html, 'center', redirectURL);
 
-    throw new Error(
-        `Access denied for ${mediaType} device [${err.name}]: ${errMessage} check the common getUserMedia errors: https://blog.addpipe.com/common-getusermedia-errors/`
-    );
+    const errorOutput = getUserMediaError
+        ? `Access denied for ${mediaType} device [${err.name}]: ${errMessage} check the common getUserMedia errors: https://blog.addpipe.com/common-getusermedia-errors/`
+        : `${err.message}`;
+
+    throw new Error(errorOutput);
 }
 
 function popupHtmlMessage(icon, imageUrl, title, html, position, redirectURL = false, reloadPage = false) {
@@ -2684,7 +2774,8 @@ function handleSelects() {
     // devices options
     videoSelect.onchange = (e) => {
         videoQuality.selectedIndex = 0;
-        rc.closeThenProduce(RoomClient.mediaType.video, videoSelect.value);
+        // If video is currently OFF, just update selection for the next start.
+        if (video) rc.closeThenProduce(RoomClient.mediaType.video, videoSelect.value);
         refreshLsDevices();
     };
     videoQuality.onchange = () => {
@@ -2709,7 +2800,8 @@ function handleSelects() {
         lS.setSettings(localStorageSettings);
     };
     microphoneSelect.onchange = () => {
-        rc.closeThenProduce(RoomClient.mediaType.audio, microphoneSelect.value);
+        // If audio is currently OFF, just update selection for the next start.
+        if (audio) rc.closeThenProduce(RoomClient.mediaType.audio, microphoneSelect.value);
         refreshLsDevices();
     };
     speakerSelect.onchange = () => {
@@ -2807,6 +2899,17 @@ function handleSelects() {
         userLog('info', `Buttons always visible ${status}`, 'top-end');
         e.target.blur();
     };
+
+    // Wake Lock for mobile/tablet
+    if (!isDesktopDevice && isWakeLockSupported()) {
+        switchKeepAwake.onchange = async (e) => {
+            e.target.blur();
+            applyKeepAwake(e.currentTarget.checked);
+        };
+    } else {
+        hide(keepAwakeButton);
+    }
+
     // recording
     switchHostOnlyRecording.onchange = (e) => {
         hostOnlyRecording = e.currentTarget.checked;
@@ -2834,7 +2937,9 @@ function handleSelects() {
         e.target.blur();
     };
     BtnAspectRatio.onchange = () => {
-        setAspectRatio(BtnAspectRatio.value);
+        adaptAspectRatio(videoMediaContainer.childElementCount);
+        localStorageSettings.aspect_ratio = BtnAspectRatio.selectedIndex;
+        lS.setSettings(localStorageSettings);
     };
     BtnVideoObjectFit.onchange = () => {
         rc.handleVideoObjectFit(BtnVideoObjectFit.value);
@@ -2856,7 +2961,6 @@ function handleSelects() {
         localStorageSettings.buttons_bar = BtnsBarPosition.selectedIndex;
         lS.setSettings(localStorageSettings);
         refreshMainButtonsToolTipPlacement();
-        resizeMainButtons();
     };
     pinVideoPosition.onchange = () => {
         rc.toggleVideoPin(pinVideoPosition.value);
@@ -2888,7 +2992,8 @@ function handleSelects() {
     // whiteboard options
     wbDrawingColorEl.onchange = () => {
         wbCanvas.freeDrawingBrush.color = wbDrawingColorEl.value;
-        whiteboardIsDrawingMode(true);
+        whiteboardResetAllMode();
+        whiteboardIsPencilMode(true);
     };
     wbBackgroundColorEl.onchange = () => {
         setWhiteboardBgColor(wbBackgroundColorEl.value);
@@ -3418,12 +3523,13 @@ function handleRoomEmojiPicker() {
     }
 
     function toggleEmojiPicker() {
+        const emojiRoomIcon = emojiRoomButton.querySelector('i');
         if (emojiPickerContainer.style.display === 'block') {
             emojiPickerContainer.style.display = 'none';
-            setColor(emojiRoomButton, 'white');
+            setColor(emojiRoomIcon, 'white');
         } else {
             emojiPickerContainer.style.display = 'block';
-            setColor(emojiRoomButton, 'yellow');
+            setColor(emojiRoomIcon, '#FFD600');
         }
     }
 }
@@ -3506,6 +3612,7 @@ function loadSettingsFromLocalStorage() {
     screenOptimization.selectedIndex = localStorageSettings.screen_optimization;
     videoFps.selectedIndex = localStorageSettings.video_fps;
     screenFps.selectedIndex = localStorageSettings.screen_fps;
+    BtnAspectRatio.selectedIndex = localStorageSettings.aspect_ratio;
     BtnVideoObjectFit.selectedIndex = localStorageSettings.video_obj_fit;
     BtnVideoControls.selectedIndex = localStorageSettings.video_controls;
     BtnsBarPosition.selectedIndex = localStorageSettings.buttons_bar;
@@ -3515,7 +3622,6 @@ function loadSettingsFromLocalStorage() {
     rc.changeBtnsBarPosition(BtnsBarPosition.value);
     rc.toggleVideoPin(pinVideoPosition.value);
     refreshMainButtonsToolTipPlacement();
-    resizeMainButtons();
 }
 
 // ####################################################
@@ -3575,6 +3681,7 @@ function handleRoomClientEvents() {
         setColor(startAudioButton, 'red');
         setAudioButtonsDisabled(false);
         audio = true;
+        applyKeepAwake(audio);
     });
     rc.on(RoomClient.EVENTS.pauseAudio, () => {
         console.log('Room event: Client pause audio');
@@ -3583,6 +3690,7 @@ function handleRoomClientEvents() {
         setColor(startAudioButton, 'red');
         setAudioButtonsDisabled(false);
         audio = false;
+        applyKeepAwake(audio);
     });
     rc.on(RoomClient.EVENTS.resumeAudio, () => {
         console.log('Room event: Client resume audio');
@@ -3590,6 +3698,7 @@ function handleRoomClientEvents() {
         BUTTONS.main.startAudioButton && show(stopAudioButton);
         setAudioButtonsDisabled(false);
         audio = true;
+        applyKeepAwake(audio);
     });
     rc.on(RoomClient.EVENTS.stopAudio, () => {
         console.log('Room event: Client stop audio');
@@ -3598,6 +3707,7 @@ function handleRoomClientEvents() {
         setAudioButtonsDisabled(false);
         stopMicrophoneProcessing();
         audio = false;
+        applyKeepAwake(audio);
     });
     rc.on(RoomClient.EVENTS.startVideo, () => {
         console.log('Room event: Client start video');
@@ -3608,6 +3718,7 @@ function handleRoomClientEvents() {
         hideClassElements('videoMenuBar');
         // if (isParticipantsListOpen) getRoomParticipants();
         video = true;
+        applyKeepAwake(audio);
     });
     rc.on(RoomClient.EVENTS.pauseVideo, () => {
         console.log('Room event: Client pause video');
@@ -3617,6 +3728,7 @@ function handleRoomClientEvents() {
         setVideoButtonsDisabled(false);
         hideClassElements('videoMenuBar');
         video = false;
+        applyKeepAwake(audio);
     });
     rc.on(RoomClient.EVENTS.resumeVideo, () => {
         console.log('Room event: Client resume video');
@@ -3626,6 +3738,7 @@ function handleRoomClientEvents() {
         isVideoPrivacyActive = false;
         hideClassElements('videoMenuBar');
         video = true;
+        applyKeepAwake(audio);
     });
     rc.on(RoomClient.EVENTS.stopVideo, () => {
         console.log('Room event: Client stop video');
@@ -3636,6 +3749,7 @@ function handleRoomClientEvents() {
         hideClassElements('videoMenuBar');
         // if (isParticipantsListOpen) getRoomParticipants();
         video = false;
+        applyKeepAwake(audio);
     });
     rc.on(RoomClient.EVENTS.startScreen, () => {
         console.log('Room event: Client start screen');
@@ -3767,7 +3881,17 @@ function handleRoomClientEvents() {
 // UTILITY
 // ####################################################
 
-function leaveRoom(allowCancel = true) {
+function initLeaveMeeting() {
+    openURL('/newroom');
+}
+
+async function leaveRoom(allowCancel = true) {
+    if (rc.isRecording() || recordingStatus.innerText != '0s') {
+        recShowInfo = false;
+        rc.saveRecording('User is leaving the room, saving recording before exit');
+        rc.popupRecordingOnLeaveRoom();
+        return;
+    }
     survey && survey.enabled ? leaveFeedback(allowCancel) : redirectOnLeave();
 }
 
@@ -3806,7 +3930,7 @@ function redirectOnLeave() {
     redirect && redirect.enabled ? openURL(redirect.url) : openURL('/newroom');
 }
 
-function userLog(icon, message, position, timer = 3000) {
+function userLog(icon, message, position = 'top-end', timer = 3000) {
     const Toast = Swal.mixin({
         background: swalBackground,
         toast: true,
@@ -3882,8 +4006,49 @@ function handleButtonsBar() {
         : document.body.addEventListener('touchstart', showButtonsHandler);
 }
 
+function handleDropdownHover(dropdownElement = null) {
+    const supportsHover = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    if (!supportsHover) return;
+
+    const dropdowns = dropdownElement ? dropdownElement : document.querySelectorAll('.dropdown');
+    console.log(`Dropdown found: ${dropdowns.length}`);
+
+    dropdowns.forEach((dropdown) => {
+        const toggle = dropdown.querySelector('.dropdown-toggle');
+        const menu = dropdown.querySelector('.dropdown-menu');
+
+        if (!toggle || !menu) return;
+
+        let timeoutId;
+
+        dropdown.addEventListener('mouseenter', () => {
+            clearTimeout(timeoutId);
+            const bsDropdown = bootstrap.Dropdown.getInstance(toggle) || new bootstrap.Dropdown(toggle);
+            bsDropdown.show();
+        });
+
+        dropdown.addEventListener('mouseleave', () => {
+            timeoutId = setTimeout(() => {
+                const bsDropdown = bootstrap.Dropdown.getInstance(toggle);
+                if (bsDropdown) {
+                    bsDropdown.hide();
+                }
+            }, 200);
+        });
+
+        menu.addEventListener('mouseenter', () => {
+            clearTimeout(timeoutId);
+        });
+
+        toggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+    });
+}
+
 function showButtons() {
     if (
+        wbIsBgTransparent ||
         isButtonsBarOver ||
         isButtonsVisible ||
         rc.isVideoBarDropDownOpen ||
@@ -3891,21 +4056,16 @@ function showButtons() {
         (isMobileDevice && rc.isMySettingsOpen)
     )
         return;
-    toggleExtraButton.innerHTML = icons.down;
     bottomButtons.style.display = 'flex';
     isButtonsVisible = true;
 }
 
-function checkButtonsBar() {
+function checkButtonsBar() {   
     if (localStorageSettings.keep_buttons_visible) {
-        control.style.display = 'flex';
-        toggleExtraButton.innerHTML = icons.up;
         bottomButtons.style.display = 'flex';
         isButtonsVisible = true;
     } else {
         if (!isButtonsBarOver) {
-            control.style.display = 'none';
-            toggleExtraButton.innerHTML = icons.up;
             bottomButtons.style.display = 'none';
             isButtonsVisible = false;
         }
@@ -3913,16 +4073,6 @@ function checkButtonsBar() {
     setTimeout(() => {
         checkButtonsBar();
     }, 10000);
-}
-
-function toggleExtraButtons() {
-    const isControlHidden = control.style.display === 'none' || control.style.display === '';
-    const displayValue = isControlHidden ? 'flex' : 'none';
-    const iconHtml = isControlHidden ? icons.up : icons.down;
-
-    elemDisplay('control', isControlHidden, displayValue);
-    toggleExtraButton.innerHTML = iconHtml;
-    hideClassElements('videoMenuBar');
 }
 
 function hideClassElements(className) {
@@ -3975,6 +4125,25 @@ function setVideoButtonsDisabled(disabled) {
     stopVideoButton.disabled = disabled;
 }
 
+async function playSpeaker(deviceId = null, name, path = '../sounds/') {
+    const selectedDeviceId = deviceId || audioOutputSelect?.value;
+    if (selectedDeviceId) {
+        const sound = path + name + '.wav';
+        const audioToPlay = new Audio(sound);
+        try {
+            if (typeof audioToPlay.setSinkId === 'function') {
+                await audioToPlay.setSinkId(selectedDeviceId);
+            }
+            audioToPlay.volume = 0.5;
+            await audioToPlay.play();
+        } catch (err) {
+            console.error('Cannot play test sound:', err);
+        }
+    } else {
+        sound(name, true);
+    }
+}
+
 async function sound(name, force = false) {
     if (!isSoundEnabled && !force) return;
     let sound = '../sounds/' + name + '.wav';
@@ -3985,6 +4154,11 @@ async function sound(name, force = false) {
     } catch (err) {
         return false;
     }
+}
+
+function isValidEmail(email) {
+    const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+    return emailRegex.test(email);
 }
 
 async function isImageURL(url) {
@@ -4075,6 +4249,320 @@ function getId(id) {
 }
 
 // ####################################################
+// SETTINGS EXTRA (buttons dropdown)
+// ####################################################
+
+function setupSettingsExtraDropdown() {
+    if (!settingsSplit || !settingsExtraDropdown || !settingsExtraToggle || !settingsExtraMenu) return;
+
+    // TODO improve me.....
+    if (BUTTONS.main.extraButton) {
+        show(settingsExtraDropdown);
+        show(settingsExtraMenu);
+    } else {
+        hide(settingsExtraDropdown);
+        hide(settingsExtraMenu);
+        elemDisplay(noExtraButtons, true);
+        settingsButton.style.borderRadius = '10px';
+    }
+
+    let showTimeout;
+    let hideTimeout;
+
+    function showMenu() {
+        clearTimeout(hideTimeout);
+        show(settingsExtraMenu);
+    }
+    function hideMenu() {
+        clearTimeout(showTimeout);
+        hide(settingsExtraMenu);
+    }
+
+    settingsExtraToggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        !settingsExtraMenu.classList.contains('hidden') ? hideMenu() : showMenu();
+    });
+
+    const supportsHover = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    if (supportsHover) {
+        let closeTimeout;
+        const cancelClose = () => {
+            if (!closeTimeout) return;
+            clearTimeout(closeTimeout);
+            closeTimeout = null;
+        };
+        const scheduleClose = () => {
+            cancelClose();
+            closeTimeout = setTimeout(() => hideMenu(), 180);
+        };
+        settingsExtraToggle.addEventListener('mouseenter', () => {
+            cancelClose();
+            showMenu();
+        });
+        settingsExtraToggle.addEventListener('mouseleave', scheduleClose);
+        settingsExtraMenu.addEventListener('mouseenter', cancelClose);
+        settingsExtraMenu.addEventListener('mouseleave', scheduleClose);
+    }
+
+    // Prevent closing when clicking inside the menu
+    settingsExtraMenu.addEventListener('click', function (e) {
+        e.stopPropagation();
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!settingsExtraToggle.contains(e.target) && !settingsExtraMenu.contains(e.target)) {
+            hideMenu();
+        }
+    });
+}
+
+// ####################################################
+// QUICK DEVICE SWITCH (Start Audio/Video dropdowns)
+// ####################################################
+
+function restoreSplitButtonsBorderRadius() {
+    document.querySelectorAll('#bottomButtons .split-btn').forEach((group) => {
+        group.querySelectorAll('button').forEach((button) => {
+            if (button.id != 'settingsExtraToggle' && button.id != 'settingsButton') {
+                button.style.setProperty('border-radius', '10px', 'important');
+            }
+        });
+        const toggle = group.querySelector('.device-dropdown-toggle');
+        if (toggle) toggle.style.setProperty('border-left', 'none', 'important');
+    });
+}
+
+function setupQuickDeviceSwitchDropdowns() {
+    // For now keep this feature only for desktop devices
+    if (!isDesktopDevice) {
+        restoreSplitButtonsBorderRadius();
+        return;
+    }
+
+    if (
+        !startVideoBtn ||
+        !startAudioBtn ||
+        !stopVideoBtn ||
+        !stopAudioBtn ||
+        !videoDropdown ||
+        !audioDropdown ||
+        !videoToggle ||
+        !audioToggle
+    ) {
+        return;
+    }
+
+    function syncVisibility() {
+        // Keep dropdown visible while either Start or Stop button is visible
+        const showVideo = !startVideoBtn.classList.contains('hidden') || !stopVideoBtn.classList.contains('hidden');
+        const showAudio = !startAudioBtn.classList.contains('hidden') || !stopAudioBtn.classList.contains('hidden');
+        videoDropdown.classList.toggle('hidden', !showVideo);
+        audioDropdown.classList.toggle('hidden', !showAudio);
+    }
+
+    function appendMenuHeader(menuEl, iconClass, title) {
+        const header = document.createElement('div');
+        header.className = 'device-menu-header';
+
+        const icon = document.createElement('i');
+        icon.className = iconClass;
+
+        const text = document.createElement('span');
+        text.textContent = title;
+
+        header.appendChild(icon);
+        header.appendChild(text);
+        menuEl.appendChild(header);
+    }
+
+    function appendMenuDivider(menuEl) {
+        const divider = document.createElement('div');
+        divider.className = 'device-menu-divider';
+        menuEl.appendChild(divider);
+    }
+
+    function appendSelectOptions(menuEl, selectEl, emptyLabel, rebuildFn) {
+        if (!selectEl) return;
+
+        const options = Array.from(selectEl.options || []).filter((o) => o && o.value);
+        if (options.length === 0) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.disabled = true;
+            btn.textContent = emptyLabel;
+            menuEl.appendChild(btn);
+            return;
+        }
+
+        options.forEach((opt) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+
+            const isSelected = opt.value === selectEl.value;
+            const label = opt.textContent || opt.label || opt.value;
+
+            btn.replaceChildren();
+            if (isSelected) {
+                const icon = document.createElement('i');
+                icon.className = 'fas fa-check';
+                btn.appendChild(icon);
+                btn.appendChild(document.createTextNode(` ${label}`));
+            } else {
+                const spacer = document.createElement('span');
+                spacer.style.display = 'inline-block';
+                spacer.style.width = '1.25em';
+                btn.appendChild(spacer);
+                btn.appendChild(document.createTextNode(label));
+            }
+
+            btn.addEventListener('click', () => {
+                if (selectEl.value === opt.value) return;
+                selectEl.value = opt.value;
+                selectEl.dispatchEvent(new Event('change'));
+            });
+
+            menuEl.appendChild(btn);
+        });
+    }
+
+    function buildVideoMenu() {
+        if (!videoMenu || !videoSelect) return;
+        videoMenu.innerHTML = '';
+
+        appendMenuHeader(videoMenu, 'fas fa-video', 'Cameras');
+        appendSelectOptions(videoMenu, videoSelect, 'No cameras found', buildVideoMenu);
+
+        // Add settings button
+        appendMenuDivider(videoMenu);
+        const settingsBtn = document.createElement('button');
+        settingsBtn.type = 'button';
+        settingsBtn.className = 'device-menu-action-btn';
+        const settingsIcon = document.createElement('i');
+        settingsIcon.className = 'fas fa-cog';
+        settingsBtn.appendChild(settingsIcon);
+        settingsBtn.appendChild(document.createTextNode(' Open Video Settings'));
+        settingsBtn.addEventListener('click', () => {
+            rc.toggleMySettings();
+            // Simulate tab click to open video devices tab
+            setTimeout(() => {
+                tabVideoDevicesBtn.click();
+            }, 100);
+        });
+        videoMenu.appendChild(settingsBtn);
+    }
+
+    function buildAudioMenu() {
+        if (!audioMenu) return;
+
+        audioMenu.innerHTML = '';
+
+        appendMenuHeader(audioMenu, 'fas fa-microphone', 'Microphones');
+        appendSelectOptions(audioMenu, microphoneSelect, 'No microphones found', buildAudioMenu);
+
+        appendMenuDivider(audioMenu);
+
+        appendMenuHeader(audioMenu, 'fas fa-volume-high', 'Speakers');
+        if (!speakerSelect || speakerSelect.disabled) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.disabled = true;
+            btn.textContent = 'Speaker selection not supported';
+            audioMenu.appendChild(btn);
+            return;
+        }
+        appendSelectOptions(audioMenu, speakerSelect, 'No speakers found', buildAudioMenu);
+
+        // Add action buttons
+        appendMenuDivider(audioMenu);
+
+        // Test speaker button
+        const testBtn = document.createElement('button');
+        testBtn.type = 'button';
+        testBtn.className = 'device-menu-action-btn';
+        const testIcon = document.createElement('i');
+        testIcon.className = 'fa-solid fa-circle-play';
+        testBtn.appendChild(testIcon);
+        testBtn.appendChild(document.createTextNode(' Test Speaker'));
+        testBtn.addEventListener('click', () => {
+            playSpeaker(speakerSelect?.value, 'ring');
+        });
+        audioMenu.appendChild(testBtn);
+
+        // Settings button
+        const settingsBtn = document.createElement('button');
+        settingsBtn.type = 'button';
+        settingsBtn.className = 'device-menu-action-btn';
+        const settingsIcon = document.createElement('i');
+        settingsIcon.className = 'fas fa-cog';
+        settingsBtn.appendChild(settingsIcon);
+        settingsBtn.appendChild(document.createTextNode(' Open Audio Settings'));
+        settingsBtn.addEventListener('click', () => {
+            rc.toggleMySettings();
+            // Simulate tab click to open audio devices tab
+            setTimeout(() => {
+                tabAudioDevicesBtn.click();
+            }, 100);
+        });
+        audioMenu.appendChild(settingsBtn);
+    }
+
+    function rebuildVideoMenu() {
+        // Debounce rebuilds to prevent interference with selection
+        clearTimeout(rebuildVideoMenu.timeoutId);
+        rebuildVideoMenu.timeoutId = setTimeout(() => {
+            buildVideoMenu();
+        }, 10);
+    }
+
+    function rebuildAudioMenu() {
+        // Debounce rebuilds to prevent interference with selection
+        clearTimeout(rebuildAudioMenu.timeoutId);
+        rebuildAudioMenu.timeoutId = setTimeout(() => {
+            buildAudioMenu();
+        }, 10);
+    }
+
+    // Build menus when opening (click or hover)
+    videoDropdown.addEventListener('click', rebuildVideoMenu);
+    audioDropdown.addEventListener('click', rebuildAudioMenu);
+    videoToggle.addEventListener('mouseenter', rebuildVideoMenu);
+    audioToggle.addEventListener('mouseenter', rebuildAudioMenu);
+
+    // Keep UI synced when settings panel changes device
+    if (videoSelect) videoSelect.addEventListener('change', rebuildVideoMenu);
+    if (microphoneSelect) microphoneSelect.addEventListener('change', rebuildAudioMenu);
+    if (speakerSelect) speakerSelect.addEventListener('change', rebuildAudioMenu);
+
+    // Keep arrow buttons visible only when Start buttons are visible
+    syncVisibility();
+    const observer = new MutationObserver(syncVisibility);
+    observer.observe(startVideoBtn, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(startAudioBtn, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(stopVideoBtn, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(stopAudioBtn, { attributes: true, attributeFilter: ['class'] });
+
+    // Re-enumerate & refresh lists on hardware changes
+    if (navigator.mediaDevices) {
+        let deviceChangeFrame;
+        navigator.mediaDevices.addEventListener('devicechange', () => {
+            if (deviceChangeFrame) cancelAnimationFrame(deviceChangeFrame);
+            deviceChangeFrame = requestAnimationFrame(async () => {
+                try {
+                    await refreshMyAudioVideoDevices();
+                } catch (err) {
+                    // ignore
+                }
+                // Use timeout to prevent interference with ongoing selections
+                setTimeout(() => {
+                    rebuildVideoMenu();
+                    rebuildAudioMenu();
+                }, 50);
+            });
+        });
+    }
+}
+
+// ####################################################
 // HANDLE WHITEBOARD
 // ####################################################
 
@@ -4088,34 +4576,50 @@ function toggleWhiteboard() {
 function whiteboardCenter() {
     whiteboard.style.top = '50%';
     whiteboard.style.left = '50%';
+    whiteboard.style.transform = 'translate(-50%, -50%)';
 }
 
 function setupWhiteboard() {
     setupWhiteboardCanvas();
     setupWhiteboardCanvasSize();
-    setupWhiteboardLocalListners();
+    setupWhiteboardLocalListeners();
+    setupWhiteboardShortcuts();
+    setupWhiteboardDragAndDrop();
+    setupWhiteboardResizeListener();
 }
 
 function setupWhiteboardCanvas() {
     wbCanvas = new fabric.Canvas('wbCanvas');
     wbCanvas.freeDrawingBrush.color = '#FFFFFF';
     wbCanvas.freeDrawingBrush.width = 3;
-    whiteboardIsDrawingMode(true);
+    whiteboardIsPencilMode(true);
 }
 
 function setupWhiteboardCanvasSize() {
-    const optimalSize = [wbWidth, wbHeight];
-    const scaleFactorX = window.innerWidth / optimalSize[0];
-    const scaleFactorY = window.innerHeight / optimalSize[1];
-    const scaleFactor = Math.min(scaleFactorX, scaleFactorY, 1);
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
 
-    const newWidth = optimalSize[0] * scaleFactor;
-    const newHeight = optimalSize[1] * scaleFactor;
+    const containerPadding = isMobileDevice ? 10 : 20;
+    const headerHeight = isMobileDevice ? 40 : 60;
+    const extraMargin = 20;
 
-    wbCanvas.setWidth(newWidth);
-    wbCanvas.setHeight(newHeight);
-    wbCanvas.setZoom(scaleFactor);
-    setWhiteboardSize(newWidth, newHeight);
+    const availableWidth = viewportWidth - containerPadding - extraMargin;
+    const availableHeight = viewportHeight - containerPadding - headerHeight - extraMargin;
+
+    const scaleX = availableWidth / wbReferenceWidth;
+    const scaleY = availableHeight / wbReferenceHeight;
+    const scale = Math.min(scaleX, scaleY);
+
+    const canvasWidth = wbReferenceWidth * scale;
+    const canvasHeight = wbReferenceHeight * scale;
+
+    wbCanvas.setWidth(canvasWidth);
+    wbCanvas.setHeight(canvasHeight);
+    wbCanvas.setZoom(scale);
+
+    setWhiteboardSize(canvasWidth + containerPadding, canvasHeight + headerHeight + containerPadding);
+
+    whiteboardCenter();
 
     wbCanvas.calcOffset();
     wbCanvas.renderAll();
@@ -4126,9 +4630,29 @@ function setWhiteboardSize(w, h) {
     document.documentElement.style.setProperty('--wb-height', h);
 }
 
+function setupWhiteboardResizeListener() {
+    let resizeFrame;
+    window.addEventListener('resize', () => {
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => {
+            if (wbCanvas && wbIsOpen) {
+                setupWhiteboardCanvasSize();
+            }
+        });
+    });
+    window.addEventListener('orientationchange', () => {
+        setTimeout(() => {
+            if (wbCanvas && wbIsOpen) {
+                setupWhiteboardCanvasSize();
+            }
+        }, 300);
+    });
+}
+
 function drawCanvasGrid() {
-    const width = wbCanvas.getWidth();
-    const height = wbCanvas.getHeight();
+    // Use reference dimensions for grid, zoom will handle scaling
+    const width = wbReferenceWidth;
+    const height = wbReferenceHeight;
 
     removeCanvasGrid();
 
@@ -4146,6 +4670,7 @@ function drawCanvasGrid() {
     wbCanvas.add(gridGroup);
     gridGroup.sendToBack();
     wbCanvas.renderAll();
+    setColor(whiteboardGridBtn, 'green');
 }
 
 function createGridLine(x1, y1, x2, y2) {
@@ -4163,6 +4688,7 @@ function removeCanvasGrid() {
     });
     wbGridLines = [];
     wbCanvas.renderAll();
+    setColor(whiteboardGridBtn, 'white');
 }
 
 function toggleCanvasGrid() {
@@ -4180,26 +4706,39 @@ function setWhiteboardBgColor(color) {
     whiteboardAction(data);
 }
 
-function whiteboardIsDrawingMode(status) {
-    wbCanvas.isDrawingMode = status;
-    if (status) {
-        setColor(whiteboardPencilBtn, 'green');
-        setColor(whiteboardObjectBtn, 'white');
-        setColor(whiteboardEraserBtn, 'white');
-        wbIsEraser = false;
-    } else {
-        setColor(whiteboardPencilBtn, 'white');
-        setColor(whiteboardObjectBtn, 'green');
-    }
+function whiteboardResetAllMode() {
+    whiteboardIsPencilMode(false);
+    whiteboardIsVanishingMode(false);
+    whiteboardIsObjectMode(false);
+    whiteboardIsEraserMode(false);
 }
 
-function whiteboardIsEraser(status) {
-    whiteboardIsDrawingMode(false);
+function whiteboardIsPencilMode(status) {
+    wbCanvas.isDrawingMode = status;
+    wbIsPencil = status;
+    setColor(whiteboardPencilBtn, wbIsPencil ? 'green' : 'white');
+}
+
+function whiteboardIsVanishingMode(status) {
+    wbCanvas.isDrawingMode = status;
+    wbIsVanishing = status;
+    wbCanvas.freeDrawingBrush.color = wbIsVanishing ? 'yellow' : wbDrawingColorEl.value;
+    setColor(whiteboardVanishingBtn, wbIsVanishing ? 'green' : 'white');
+}
+
+function whiteboardIsObjectMode(status) {
+    wbIsObject = status;
+    setColor(whiteboardObjectBtn, status ? 'green' : 'white');
+}
+
+function whiteboardIsEraserMode(status) {
     wbIsEraser = status;
     setColor(whiteboardEraserBtn, wbIsEraser ? 'green' : 'white');
 }
 
 function whiteboardAddObj(type) {
+    wbCanvas.freeDrawingBrush.color = wbDrawingColorEl.value;
+
     switch (type) {
         case 'imgUrl':
             Swal.fire({
@@ -4239,6 +4778,9 @@ function whiteboardAddObj(type) {
                 stroke: wbCanvas.freeDrawingBrush.color,
             });
             addWbCanvasObj(text);
+            break;
+        case 'stickyNote':
+            createStickyNote();
             break;
         case 'line':
             const line = new fabric.Line([50, 100, 200, 200], {
@@ -4286,6 +4828,185 @@ function whiteboardAddObj(type) {
         default:
             break;
     }
+}
+
+function whiteboardDeleteObject() {
+    const obj = wbCanvas?.getActiveObject?.();
+    if (!obj) return;
+    const tag = document.activeElement?.tagName;
+    if ((tag === 'INPUT' || tag === 'TEXTAREA') && !obj.isEditing) return;
+    if (obj.isEditing && obj.exitEditing) obj.exitEditing();
+    whiteboardEraseObject();
+    return;
+}
+
+function whiteboardEraseObject() {
+    if (wbCanvas && typeof wbCanvas.getActiveObjects === 'function') {
+        const activeObjects = wbCanvas.getActiveObjects();
+        if (activeObjects && activeObjects.length > 0) {
+            // Remove all selected objects
+            activeObjects.forEach((obj) => {
+                wbCanvas.remove(obj);
+            });
+            wbCanvas.discardActiveObject();
+            wbCanvas.requestRenderAll();
+            wbCanvasToJson();
+        }
+    }
+}
+
+function whiteboardCloneObject() {
+    if (wbCanvas && typeof wbCanvas.getActiveObjects === 'function') {
+        const activeObjects = wbCanvas.getActiveObjects();
+        if (activeObjects && activeObjects.length > 0) {
+            activeObjects.forEach((obj, idx) => {
+                obj.clone((cloned) => {
+                    // Offset each clone for visibility
+                    cloned.set({
+                        left: obj.left + 30 + idx * 10,
+                        top: obj.top + 30 + idx * 10,
+                        evented: true,
+                    });
+                    wbCanvas.add(cloned);
+                    wbCanvas.setActiveObject(cloned);
+                    wbCanvasToJson();
+                });
+            });
+            wbCanvas.requestRenderAll();
+        }
+    }
+}
+
+function wbHandleVanishingObjects() {
+    if (wbIsVanishing && wbCanvas._objects.length > 0) {
+        const obj = wbCanvas._objects[wbCanvas._objects.length - 1];
+        if (obj && obj.type === 'path') {
+            wbVanishingObjects.push(obj);
+            const fadeDuration = 1000,
+                vanishTimeout = 5000;
+            setTimeout(() => {
+                const start = performance.now();
+                function fade(ts) {
+                    const p = Math.min((ts - start) / fadeDuration, 1);
+                    obj.set('opacity', 1 - p);
+                    wbCanvas.requestRenderAll();
+                    if (p < 1) requestAnimationFrame(fade);
+                }
+                requestAnimationFrame(fade);
+            }, vanishTimeout - fadeDuration);
+            setTimeout(() => {
+                wbCanvas.remove(obj);
+                wbCanvas.renderAll();
+                wbCanvasToJson();
+                wbVanishingObjects.splice(wbVanishingObjects.indexOf(obj), 1);
+            }, vanishTimeout);
+        }
+    }
+}
+
+function createStickyNote() {
+    Swal.fire({
+        background: swalBackground,
+        title: 'Create Sticky Note',
+        html: `
+        <div class="sticky-note-form">
+            <textarea id="stickyNoteText" class="sticky-note-textarea" rows="4" placeholder="Type your note here...">Note</textarea>
+            <div class="sticky-note-colors-row">
+                <div class="sticky-note-color-group">
+                    <label for="stickyNoteColor" class="sticky-note-color-label">
+                        <i class="fas fa-palette"></i> Background
+                    </label>
+                    <input id="stickyNoteColor" type="color" value="#FFEB3B" class="sticky-note-color-input">
+                </div>
+                <div class="sticky-note-color-group">
+                    <label for="stickyNoteTextColor" class="sticky-note-color-label">
+                        <i class="fas fa-font"></i> Text
+                    </label>
+                    <input id="stickyNoteTextColor" type="color" value="#000000" class="sticky-note-color-input">
+                </div>
+            </div>
+        </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: 'Create',
+        cancelButtonText: 'Cancel',
+        showClass: { popup: 'animate__animated animate__fadeInDown' },
+        hideClass: { popup: 'animate__animated animate__fadeOutUp' },
+        preConfirm: () => {
+            return {
+                text: getId('stickyNoteText').value,
+                color: getId('stickyNoteColor').value,
+                textColor: getId('stickyNoteTextColor').value,
+            };
+        },
+        didOpen: () => {
+            // Focus textarea for quick typing
+            setTimeout(() => {
+                getId('stickyNoteText').focus();
+            }, 100);
+        },
+    }).then((result) => {
+        if (result.isConfirmed) {
+            const noteData = result.value;
+
+            // Create sticky note background (rectangle)
+            const noteRect = new fabric.Rect({
+                left: 100,
+                top: 100,
+                width: 220,
+                height: 160,
+                fill: noteData.color,
+                shadow: 'rgba(0,0,0,0.18) 0px 4px 12px',
+                rx: 14,
+                ry: 14,
+            });
+
+            // Create text for sticky note
+            const noteText = new fabric.Textbox(noteData.text, {
+                left: 110,
+                top: 110,
+                width: 200,
+                fontSize: 18,
+                fontFamily: 'Segoe UI, Arial, sans-serif',
+                fill: noteData.textColor,
+                textAlign: 'left',
+                editable: true,
+                fontWeight: 'bold',
+                shadow: new fabric.Shadow({
+                    color: 'rgba(255,255,255,0.18)',
+                    blur: 2,
+                    offsetX: 1,
+                    offsetY: 1,
+                }),
+                padding: 8,
+                cornerSize: 8,
+            });
+
+            // Group rectangle and text together
+            const stickyNoteGroup = new fabric.Group([noteRect, noteText], {
+                left: 100,
+                top: 100,
+                selectable: true,
+                hasControls: true,
+                hoverCursor: 'pointer',
+            });
+
+            // Make the text editable by handling double-click events
+            stickyNoteGroup.on('mousedblclick', function () {
+                noteText.enterEditing();
+                noteText.hiddenTextarea && noteText.hiddenTextarea.focus();
+            });
+
+            // Exit editing when clicking outside the noteText
+            wbCanvas.on('mouse:down', function (e) {
+                if (noteText.isEditing && e.target !== noteText) {
+                    noteText.exitEditing();
+                }
+            });
+
+            addWbCanvasObj(stickyNoteGroup);
+        }
+    });
 }
 
 function setupFileSelection(title, accept, renderToCanvas) {
@@ -4381,7 +5102,8 @@ async function renderPdfToCanvas(wbCanvasPdf) {
         reader.onload = async function (event) {
             wbCanvas.requestRenderAll();
             await pdfToImage(event.target.result, wbCanvas);
-            whiteboardIsDrawingMode(false);
+            whiteboardResetAllMode();
+            whiteboardIsObjectMode(true);
             wbCanvasToJson();
         };
         reader.readAsDataURL(wbCanvasPdf);
@@ -4451,14 +5173,15 @@ async function pdfToImage(pdfData, canvas) {
 function addWbCanvasObj(obj) {
     if (obj) {
         wbCanvas.add(obj).setActiveObject(obj);
-        whiteboardIsDrawingMode(false);
+        whiteboardResetAllMode();
+        whiteboardIsObjectMode(true);
         wbCanvasToJson();
     } else {
         console.error('Invalid input. Expected an obj of canvas elements');
     }
 }
 
-function setupWhiteboardLocalListners() {
+function setupWhiteboardLocalListeners() {
     wbCanvas.on('mouse:down', function (e) {
         mouseDown(e);
     });
@@ -4476,6 +5199,9 @@ function setupWhiteboardLocalListners() {
 function mouseDown(e) {
     wbIsDrawing = true;
     if (wbIsEraser && e.target) {
+        if (!wbVanishingObjects.includes(e.target)) {
+            wbPop.push(e.target); // To allow redo
+        }
         wbCanvas.remove(e.target);
         return;
     }
@@ -4499,6 +5225,7 @@ function mouseMove() {
 function objectAdded() {
     if (!wbIsRedoing) wbPop = [];
     wbIsRedoing = false;
+    wbHandleVanishingObjects();
 }
 
 function wbCanvasBackgroundColor(color) {
@@ -4510,7 +5237,10 @@ function wbCanvasBackgroundColor(color) {
 
 function wbCanvasUndo() {
     if (wbCanvas._objects.length > 0) {
-        wbPop.push(wbCanvas._objects.pop());
+        const obj = wbCanvas._objects.pop();
+        if (!wbVanishingObjects.includes(obj)) {
+            wbPop.push(obj);
+        }
         wbCanvas.renderAll();
     }
 }
@@ -4520,6 +5250,11 @@ function wbCanvasRedo() {
         wbIsRedoing = true;
         wbCanvas.add(wbPop.pop());
     }
+}
+
+function wbCanvasClear() {
+    wbCanvas.clear();
+    wbCanvas.renderAll();
 }
 
 function wbCanvasSaveImg() {
@@ -4544,17 +5279,27 @@ function wbUpdate() {
 }
 
 function wbCanvasToJson() {
-    if (!isPresenter && wbIsLock) return;
-    if (rc.thereAreParticipants()) {
-        let wbCanvasJson = JSON.stringify(wbCanvas.toJSON());
-        rc.socket.emit('wbCanvasToJson', wbCanvasJson);
+    console.log('wbCanvasToJson called');
+    if (!isPresenter && wbIsLock) {
+        console.log('Not presenter and whiteboard is locked. Exiting');
+        return;
     }
+    if (!rc.thereAreParticipants()) {
+        console.log('No participants. Exiting');
+        return;
+    }
+    let wbCanvasJson = JSON.stringify(wbCanvas.toJSON());
+    console.log('Emitting wbCanvasToJson');
+    rc.socket.emit('wbCanvasToJson', wbCanvasJson);
 }
 
 function JsonToWbCanvas(json) {
     if (!wbIsOpen) toggleWhiteboard();
-    wbCanvas.loadFromJSON(json);
-    wbCanvas.renderAll();
+    wbIsRedoing = true;
+    wbCanvas.loadFromJSON(json, function () {
+        setupWhiteboardCanvasSize();
+        wbIsRedoing = false;
+    });
     if (!isPresenter && !wbCanvas.isDrawingMode && wbIsLock) {
         wbDrawing(false);
     }
@@ -4571,7 +5316,7 @@ function confirmClearBoard() {
     Swal.fire({
         background: swalBackground,
         imageUrl: image.delete,
-        position: 'center',
+        position: 'top',
         title: 'Clean the board',
         text: 'Are you sure you want to clean the board?',
         showDenyButton: true,
@@ -4584,6 +5329,23 @@ function confirmClearBoard() {
             whiteboardAction(getWhiteboardAction('clear'));
             sound('delete');
         }
+    });
+}
+
+function showWhiteboardShortcuts() {
+    const whiteboardShortcutsContent = getId('whiteboardShortcutsContent');
+    if (!whiteboardShortcutsContent) {
+        console.error('Whiteboard shortcuts content not found');
+        return;
+    }
+    Swal.fire({
+        background: swalBackground,
+        position: 'center',
+        title: 'Whiteboard Shortcuts',
+        html: whiteboardShortcutsContent.innerHTML,
+        confirmButtonText: 'Got it!',
+        showClass: { popup: 'animate__animated animate__fadeInDown' },
+        hideClass: { popup: 'animate__animated animate__fadeOutUp' },
     });
 }
 
@@ -4631,7 +5393,8 @@ function whiteboardAction(data, emit = true) {
             wbCanvasRedo();
             break;
         case 'clear':
-            wbCanvas.clear();
+            wbCanvasClear();
+            removeCanvasGrid();
             break;
         case 'lock':
             if (!isPresenter) {
@@ -4645,7 +5408,7 @@ function whiteboardAction(data, emit = true) {
         case 'unlock':
             if (!isPresenter) {
                 elemDisplay('whiteboardTitle', true, 'flex');
-                elemDisplay('whiteboardOptions', true, 'inline');
+                elemDisplay('whiteboardOptions', true, 'flex');
                 elemDisplay('whiteboardButton', true);
                 wbDrawing(true);
                 wbIsLock = false;
@@ -4653,6 +5416,7 @@ function whiteboardAction(data, emit = true) {
             break;
         case 'close':
             if (wbIsOpen) toggleWhiteboard();
+            if (wbIsBgTransparent) setTheme();
             break;
         default:
             break;
@@ -4665,6 +5429,168 @@ function wbDrawing(status) {
     wbCanvas.selection = status; // Disable object selection
     wbCanvas.forEachObject(function (obj) {
         obj.selectable = status; // Make all objects unselectable
+    });
+}
+
+// ####################################################
+// HANDLE WHITEBOARD DRAG AND DROP
+// ####################################################
+
+function setupWhiteboardDragAndDrop() {
+    if (!wbCanvas) return;
+
+    // Prevent default drag behaviors
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach((eventName) => {
+        wbCanvas.upperCanvasEl.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    // Highlight drop area
+    ['dragenter', 'dragover'].forEach((eventName) => {
+        wbCanvas.upperCanvasEl.addEventListener(
+            eventName,
+            () => {
+                wbCanvas.upperCanvasEl.style.border = '1px dashed #fff';
+            },
+            false
+        );
+    });
+
+    ['dragleave', 'drop'].forEach((eventName) => {
+        wbCanvas.upperCanvasEl.addEventListener(
+            eventName,
+            () => {
+                wbCanvas.upperCanvasEl.style.border = '';
+            },
+            false
+        );
+    });
+
+    // Handle dropped files
+    wbCanvas.upperCanvasEl.addEventListener('drop', handleWhiteboardDrop, false);
+}
+
+function handleWhiteboardDrop(e) {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+
+    if (files.length === 0) return;
+
+    const file = files[0];
+    const fileType = file.type;
+
+    switch (true) {
+        case fileType.startsWith('image/'):
+            renderImageToCanvas(file);
+            break;
+        case fileType === 'application/pdf':
+            renderPdfToCanvas(file);
+            break;
+        default:
+            userLog('warning', `Unsupported file type: ${fileType}. Please drop an image or PDF file.`, 'top-end');
+            break;
+    }
+}
+
+// ####################################################
+// HANDLE WHITEBOARD SHORTCUTS
+// ####################################################
+
+function setupWhiteboardShortcuts() {
+    document.addEventListener('keydown', (event) => {
+        if (!wbIsOpen) return;
+
+        // Whiteboard clone shortcut: Cmd+C/Ctrl+C
+        if ((event.key === 'c' || event.key === 'C') && (event.ctrlKey || event.metaKey)) {
+            whiteboardCloneObject();
+            event.preventDefault();
+            return;
+        }
+        // Whiteboard erase shortcut: Cmd+X/Ctrl+X
+        if ((event.key === 'x' || event.key === 'X') && (event.ctrlKey || event.metaKey)) {
+            whiteboardEraseObject();
+            event.preventDefault();
+            return;
+        }
+
+        // Whiteboard undo shortcuts: Cmd+Z/Ctrl+Z
+        if ((event.key === 'z' || event.key === 'Z') && (event.ctrlKey || event.metaKey) && !event.shiftKey) {
+            whiteboardAction(getWhiteboardAction('undo'));
+            event.preventDefault();
+            return;
+        }
+        // Whiteboard Redo shortcuts: Cmd+Shift+Z/Ctrl+Shift+Z or Cmd+Y/Ctrl+Y
+        if (
+            ((event.key === 'z' || event.key === 'Z') && (event.ctrlKey || event.metaKey) && event.shiftKey) ||
+            ((event.key === 'y' || event.key === 'Y') && (event.ctrlKey || event.metaKey))
+        ) {
+            whiteboardAction(getWhiteboardAction('redo'));
+            event.preventDefault();
+            return;
+        }
+        // Whiteboard delete shortcut: Delete / Backspace
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+            whiteboardDeleteObject();
+            event.preventDefault();
+            return;
+        }
+
+        // Use event.code and check for Alt+Meta (Mac) or Alt+Ctrl (Windows/Linux)
+        if (event.code && event.altKey && (event.ctrlKey || event.metaKey) && !event.shiftKey) {
+            switch (event.code) {
+                case 'KeyT': // Text
+                    whiteboardAddObj('text');
+                    event.preventDefault();
+                    break;
+                case 'KeyL': // Line
+                    whiteboardAddObj('line');
+                    event.preventDefault();
+                    break;
+                case 'KeyC': // Circle
+                    whiteboardAddObj('circle');
+                    event.preventDefault();
+                    break;
+                case 'KeyR': // Rectangle
+                    whiteboardAddObj('rect');
+                    event.preventDefault();
+                    break;
+                case 'KeyG': // Triangle (G for Geometry)
+                    whiteboardAddObj('triangle');
+                    event.preventDefault();
+                    break;
+                case 'KeyN': // Sticky Note
+                    whiteboardAddObj('stickyNote');
+                    event.preventDefault();
+                    break;
+                case 'KeyU': // Image (from URL)
+                    whiteboardAddObj('imgUrl');
+                    event.preventDefault();
+                    break;
+                case 'KeyV': // Vanishing Pen
+                    whiteboardResetAllMode();
+                    whiteboardIsVanishingMode(!wbIsVanishing);
+                    event.preventDefault();
+                    break;
+                case 'KeyI': // Image (from file)
+                    whiteboardAddObj('imgFile');
+                    event.preventDefault();
+                    break;
+                case 'KeyP': // PDF (from file)
+                    whiteboardAddObj('pdfFile');
+                    event.preventDefault();
+                    break;
+                case 'KeyQ': // Clear Board
+                    confirmClearBoard();
+                    event.preventDefault();
+                    break;
+                default:
+                    break;
+            }
+        }
     });
 }
 
@@ -4699,6 +5625,7 @@ async function getRoomParticipants() {
     const lists = getParticipantsList(peers);
     participantsCount = peers.size;
     participantsList.innerHTML = lists;
+    handleDropdownHover(participantsList.querySelectorAll('.dropdown'));
     refreshParticipantsCount(participantsCount, false);
     setParticipantsTippy(peers);
     console.log('*** Refresh Chat participant lists ***');
@@ -4779,7 +5706,7 @@ function getParticipantsList(peers) {
     // ONLY PRESENTER CAN EXECUTE THIS CMD
     if (!isRulesActive || isPresenter) {
         li += `
-        <div style="class="dropdown">
+        <div class="dropdown">
             <button 
                 class="dropdown-toggle" 
                 type="button" 
@@ -4788,8 +5715,7 @@ function getParticipantsList(peers) {
                 aria-expanded="false"
                 style="float: right"
             >
-            <!-- <i class="fas fa-bars"></i> -->
-            <i class="fas fa-ellipsis-vertical"></i>
+            <i class="fas fa-bars"></i>
             </button>
             <ul class="dropdown-menu text-start" aria-labelledby="${socket.id}-chatDropDownMenu">`;
 
@@ -4865,7 +5791,7 @@ function getParticipantsList(peers) {
                         <div class="status"> <i class="fa fa-circle online"></i> online <i id="${peer_id}-unread-msg" class="fas fa-comments hidden"></i> </div>
                     </div>
 
-                    <div style="class="dropdown">
+                    <div class="dropdown">
                         <button 
                             class="dropdown-toggle" 
                             type="button" 
@@ -4874,8 +5800,7 @@ function getParticipantsList(peers) {
                             aria-expanded="false"
                             style="float: right"
                         >
-                        <!-- <i class="fas fa-bars"></i> -->
-                        <i class="fas fa-ellipsis-vertical"></i>
+                        <i class="fas fa-bars"></i>
                         </button>
                         <ul class="dropdown-menu text-start" aria-labelledby="${peer_id}-chatDropDownMenu">`;
 
@@ -4945,7 +5870,7 @@ function getParticipantsList(peers) {
                 // NO ROOM BROADCASTING
                 if (!isBroadcastingEnabled) {
                     li += `
-                    <div style="class="dropdown">
+                    <div class="dropdown">
                         <button 
                             class="dropdown-toggle" 
                             type="button" 
@@ -4954,8 +5879,7 @@ function getParticipantsList(peers) {
                             aria-expanded="false"
                             style="float: right"
                         >
-                        <!-- <i class="fas fa-bars"></i> -->
-                        <i class="fas fa-ellipsis-vertical"></i>
+                        <i class="fas fa-bars"></i>
                         </button>
                         <ul class="dropdown-menu text-start" aria-labelledby="${peer_id}-chatDropDownMenu">`;
 
@@ -5240,6 +6164,20 @@ function handleAspectRatio() {
 }
 
 function adaptAspectRatio(participantsCount) {
+    if (BtnAspectRatio.selectedIndex !== 0) {
+        // User preferred aspect ratio
+        setAspectRatio(BtnAspectRatio.selectedIndex);
+        return;
+    }
+
+    // Update the participants count badge
+    if (participantsCountBadge) {
+        participantsCountBadge.textContent = participantsCount;
+        participantsCount > 1
+            ? elemDisplay('participantsCountBadge', true, 'flex')
+            : elemDisplay('participantsCountBadge', false);
+    }
+
     /* 
         ['0:0', '4:3', '16:9', '1:1', '1:2'];
     */
@@ -5294,8 +6232,9 @@ function adaptAspectRatio(participantsCount) {
         desktop = 1; // (4:3)
         mobile = 3; // (1:1)
     }
-    BtnAspectRatio.selectedIndex = isMobileDevice ? mobile : desktop;
-    setAspectRatio(BtnAspectRatio.selectedIndex);
+
+    const aspectRatio = isMobileDevice ? mobile : desktop;
+    setAspectRatio(aspectRatio);
 }
 
 // ####################################################
@@ -5668,6 +6607,11 @@ window.addEventListener('popstate', (event) => {
         hideClass: { popup: 'animate__animated animate__fadeOutUp' },
     }).then((result) => {
         if (result.isConfirmed) {
+            // Save recording if in progress
+            if (rc.isRecording() || recordingStatus.innerText != '0s') {
+                recShowInfo = false;
+                rc.saveRecording('User popstate changes');
+            }
             preventExit = false;
             // Actually go back in history
             history.back();
@@ -5680,6 +6624,12 @@ window.addEventListener('popstate', (event) => {
 
 // Intercept tab close, refresh, or direct URL navigation
 window.addEventListener('beforeunload', (e) => {
+    // Save recording if in progress
+    if (rc.isRecording() || recordingStatus.innerText != '0s') {
+        recShowInfo = false;
+        rc.saveRecording('User is closing the tab, refreshing, or navigating away');
+    }
+
     if (!preventExit || window.localStorage.isReconnected === 'true') return;
     // Modern browsers ignore custom messages, but this triggers the prompt
     e.preventDefault();
@@ -5698,7 +6648,7 @@ function showAbout() {
         position: 'center',
         imageUrl: BRAND.about?.imageUrl && BRAND.about.imageUrl.trim() !== '' ? BRAND.about.imageUrl : image.about,
         customClass: { image: 'img-about' },
-        title: BRAND.about?.title && BRAND.about.title.trim() !== '' ? BRAND.about.title : 'WebRTC SFU v1.9.76',
+        title: BRAND.about?.title && BRAND.about.title.trim() !== '' ? BRAND.about.title : 'WebRTC SFU v2.0.94',
         html: `
             <br />
             <div id="about">
@@ -5731,7 +6681,7 @@ function showAbout() {
                             </a>
                             <br /><br />
                             <hr />
-                            <span>&copy; 2025 MiroTalk SFU, all rights reserved</span>
+                            <span>&copy; 2026 MiroTalk SFU, all rights reserved</span>
                             <hr />
                         `
                 }

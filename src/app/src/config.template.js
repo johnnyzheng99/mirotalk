@@ -2,7 +2,7 @@
 
 /**
  * ==============================================
- * MiroTalk SFU - Configuration File
+ * MiroTalk SFU v2.0.94 - Configuration File
  * ==============================================
  *
  * This file contains all configurable settings for the MiroTalk SFU application.
@@ -69,6 +69,7 @@ module.exports = {
          * - Used for diagnostics and optimization
          */
         info: {
+            environment: ENVIRONMENT,
             os: {
                 type: os.type(),
                 release: os.release(),
@@ -165,7 +166,7 @@ module.exports = {
          *      - Push recordings to a remote server
          *      - Store in cloud storage services
          *      - Send to processing pipelines
-         * - dir            : Storage directory for recordings
+         * - dir            : Storage directory for recordings (Relative to app/src/ default: app/rec)
          * - maxFileSize    : Maximum recording size (1GB default)
          *
          * Docker Note:
@@ -180,8 +181,8 @@ module.exports = {
             enabled: process.env.RECORDING_ENABLED === 'true',
             uploadToS3: process.env.RECORDING_UPLOAD_TO_S3 === 'true',
             endpoint: process.env.RECORDING_ENDPOINT || '',
-            dir: 'rec',
-            maxFileSize: 1 * 1024 * 1024 * 1024, // 1GB
+            dir: process.env.RECORDING_DIR || '../rec',
+            maxFileSize: process.env.RECORDING_MAX_FILE_SIZE || 1 * 1024 * 1024 * 1024, // 1GB
         },
 
         /**
@@ -203,7 +204,7 @@ module.exports = {
          * - secret             : Must match NodeMediaServer's config.js (default: 'mirotalkRtmpSecret')
          * - apiSecret          : WebRTC→RTMP API secret (default: 'mirotalkRtmpApiSecret')
          * - expirationHours    : Stream URL expiry in hours (default: 4)
-         * - dir                : Video storage directory (default: 'app/rtmp')
+         * - dir                : Video storage directory (Relative to app/src/ default: app/rtmp)
          * - ffmpegPath         : FFmpeg binary path (auto-detected)
          * - platform           : Current OS platform (auto-detected)
          *
@@ -253,7 +254,7 @@ module.exports = {
             secret: process.env.RTMP_SECRET || 'mirotalkRtmpSecret',
             apiSecret: process.env.RTMP_API_SECRET || 'mirotalkRtmpApiSecret',
             expirationHours: parseInt(process.env.RTMP_EXPIRATION_HOURS) || 4,
-            dir: 'rtmp',
+            dir: process.env.RTMP_DIR || '../rtmp',
             ffmpegPath: RTMP_FFMPEG_PATH,
             platform: PLATFORM,
         },
@@ -380,6 +381,8 @@ module.exports = {
          * - protected      : Enable/disable host protection globally
          * - user_auth      : Require user authentication for host access
          * - users_from_db  : Fetch users from API/database instead of local config
+         * - maxAttempts    : Maximum login attempts before temporary block
+         * - minBlockTime   : Block duration in minutes after max attempts exceeded
          *
          * API Integration:
          * ---------------
@@ -414,6 +417,9 @@ module.exports = {
         host: {
             protected: process.env.HOST_PROTECTED === 'true',
             user_auth: process.env.HOST_USER_AUTH === 'true',
+
+            maxAttempts: process.env.HOST_MAX_LOGIN_ATTEMPTS || 5,
+            minBlockTime: process.env.HOST_MIN_LOGIN_BLOCK_TIME || 15, // in minutes
 
             users_from_db: process.env.HOST_USERS_FROM_DB === 'true',
             users_api_secret_key: process.env.USERS_API_SECRET || 'mirotalkweb_default_secret',
@@ -647,6 +653,7 @@ module.exports = {
          * Core Settings:
          * -------------
          * - alert      : Enable/disable email alerts [true/false] (default: false)
+         * - notify     : Enable/disable room email notifications [true/false] (default: false)
          * - host       : SMTP server address (default: 'smtp.gmail.com')
          * - port       : SMTP port (default: 587 for TLS)
          * - username   : SMTP auth username
@@ -670,6 +677,7 @@ module.exports = {
          */
         email: {
             alert: process.env.EMAIL_ALERTS_ENABLED === 'true',
+            notify: process.env.EMAIL_NOTIFICATIONS === 'true',
             host: process.env.EMAIL_HOST || 'smtp.gmail.com',
             port: parseInt(process.env.EMAIL_PORT) || 587,
             username: process.env.EMAIL_USERNAME || 'your_username',
@@ -900,13 +908,22 @@ module.exports = {
         },
 
         /**
-         * AWS S3 Storage Configuration
+         * Example for AWS S3 Storage Configuration
          * ===========================
          * Enables cloud file storage using Amazon Simple Storage Service (S3).
          *
          * Core Settings:
          * --------------
          * - enabled: Enable/disable AWS S3 integration [true/false]
+         * - accessKeyId: AWS access key ID (store in .env)
+         * - secretAccessKey: AWS secret access key (store in .env)
+         * - region: AWS region where the S3 bucket is located
+         * - bucket: Name of the S3 bucket to use for storage
+         *
+         * Advanced Settings:
+         * --------------
+         * - endpoint: Custom S3 endpoint URL (if empty to auto-resolve from region). Useful for S3-compatible services like MinIO, Wasabi, DigitalOcean Spaces, etc.
+         * - forcePathStyle: Set to true for S3-compatible services like MinIO, Wasabi, etc.
          *
          * Service Setup:
          * -------------
@@ -942,12 +959,14 @@ module.exports = {
          *   - s3:GetObject
          *   - s3:DeleteObject
          */
-        aws: {
-            enabled: process.env.AWS_S3_ENABLED === 'true',
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'your-access-key-id',
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'your-secret-access-key',
-            region: process.env.AWS_REGION || 'us-east-2',
-            bucket: process.env.AWS_S3_BUCKET || 'mirotalk',
+        s3: {
+            enabled: process.env.S3_ENABLED === 'true',
+            accessKeyId: process.env.S3_ACCESS_KEY_ID || 'your-access-key-id',
+            secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || 'your-secret-access-key',
+            bucket: process.env.S3_BUCKET || 'mirotalk',
+            region: process.env.S3_REGION || 'us-east-2',
+            endpoint: process.env.S3_ENDPOINT || '',
+            forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
         },
     },
 
@@ -1057,6 +1076,7 @@ module.exports = {
                 poweredBy: process.env.SHOW_POWERED_BY !== 'false',
                 sponsors: process.env.SHOW_SPONSORS !== 'false',
                 advertisers: process.env.SHOW_ADVERTISERS !== 'false',
+                supportUs: process.env.SHOW_SUPPORT_US !== 'false',
                 footer: process.env.SHOW_FOOTER !== 'false',
             },
 
@@ -1097,7 +1117,6 @@ module.exports = {
                         target="_blank">
                         ${process.env.AUTHOR_NAME || 'Miroslav Pejic'}
                     </a>
-                    <br />
                     <br />
                     ${process.env.EMAIL_LABEL || 'Email'}: 
                     <a id="email-button" data-umami-event="Email button"
@@ -1181,6 +1200,7 @@ module.exports = {
                 startScreenButton: process.env.SHOW_SCREEN_BUTTON !== 'false',
                 swapCameraButton: process.env.SHOW_SWAP_CAMERA !== 'false',
                 chatButton: process.env.SHOW_CHAT_BUTTON !== 'false',
+                participantsButton: process.env.SHOW_PARTICIPANTS_BUTTON !== 'false',
                 pollButton: process.env.SHOW_POLL_BUTTON !== 'false',
                 editorButton: process.env.SHOW_EDITOR_BUTTON !== 'false',
                 raiseHandButton: process.env.SHOW_RAISE_HAND !== 'false',
@@ -1205,6 +1225,7 @@ module.exports = {
                 sendEmailInvitation: process.env.SHOW_EMAIL_INVITE !== 'false',
                 micOptionsButton: process.env.SHOW_MIC_OPTIONS !== 'false',
                 tabRTMPStreamingBtn: process.env.SHOW_RTMP_TAB !== 'false',
+                tabNotificationsBtn: process.env.SHOW_NOTIFICATIONS_TAB !== 'false',
                 tabModerator: process.env.SHOW_MODERATOR_TAB !== 'false',
                 tabRecording: process.env.SHOW_RECORDING_TAB !== 'false',
                 host_only_recording: process.env.HOST_ONLY_RECORDING !== 'false',
@@ -1220,6 +1241,7 @@ module.exports = {
                 videoMirrorButton: process.env.SHOW_MIRROR_BUTTON !== 'false',
                 fullScreenButton: process.env.SHOW_FULLSCREEN !== 'false',
                 snapShotButton: process.env.SHOW_SNAPSHOT_BUTTON !== 'false',
+                focusVideoButton: process.env.SHOW_FOCUS_BUTTON !== 'false',
                 muteAudioButton: process.env.SHOW_MUTE_AUDIO !== 'false',
                 videoPrivacyButton: process.env.SHOW_PRIVACY_TOGGLE !== 'false',
                 audioVolumeInput: process.env.SHOW_VOLUME_CONTROL !== 'false',
