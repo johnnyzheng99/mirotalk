@@ -799,11 +799,18 @@ class RoomClient {
             return null;
         }
 
+        const forcedRtpExtensions = {
+            'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time': true,
+        };
+
         let device;
         try {
             device = this.test.device.enabled
-                ? await this.mediasoupClient.Device.factory({ handlerName: this.test.device.handlerName })
-                : await this.mediasoupClient.Device.factory();
+                ? await this.mediasoupClient.Device.factory({
+                      handlerName: this.test.device.handlerName,
+                      forcedRtpExtensions,
+                  })
+                : await this.mediasoupClient.Device.factory({ forcedRtpExtensions });
 
             console.log('Device created successfully:', device.handlerName);
         } catch (error) {
@@ -1844,9 +1851,6 @@ class RoomClient {
 
             const params = {
                 track,
-                headerExtensionOptions: {
-                    absCaptureTime: true,
-                },
                 appData: {
                     mediaType: type,
                 },
